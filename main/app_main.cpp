@@ -31,8 +31,11 @@ static const char* TAG = "DccAppMain";
 // Hardware Mapping Config
 // =============================================================================
 #if CONFIG_IDF_TARGET_ESP32C3
-  // ESP32-C3 default RMT pin (Change this according to your board layout)
+  // ESP32-C3 default RMT pin
   #define DCC_GPIO_PIN  GPIO_NUM_8
+#elif CONFIG_IDF_TARGET_ESP32S3
+  // ESP32-S3 default RMT pin
+  #define DCC_GPIO_PIN  GPIO_NUM_18
 #else
   // Standard ESP32 default RMT pin
   #define DCC_GPIO_PIN  GPIO_NUM_21
@@ -78,6 +81,8 @@ void configure_serial_logging() {
     ESP_LOGI(TAG, "Serial console logging successfully configured!");
 #if CONFIG_IDF_TARGET_ESP32C3
     ESP_LOGI(TAG, "Running on target: ESP32-C3 (RISC-V)");
+#elif CONFIG_IDF_TARGET_ESP32S3
+    ESP_LOGI(TAG, "Running on target: ESP32-S3 (Xtensa Dual-Core)");
 #else
     ESP_LOGI(TAG, "Running on target: ESP32 Standard (Xtensa)");
 #endif
