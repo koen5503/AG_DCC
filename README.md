@@ -90,3 +90,19 @@ To drop this module into any ESP-IDF v5.x project:
        }
    }
    ```
+
+---
+
+## 👽 Compiling with PlatformIO
+
+This repository features out-of-the-box cross-platform compilation support for VS Code with the **PlatformIO** extension. The `platformio.ini` file in the root is pre-configured to build the project using the native ESP-IDF framework while pointing to the standard `main/` directory structure.
+
+To compile, flash, and monitor using PlatformIO:
+
+1. Install the **PlatformIO IDE** extension in VS Code.
+2. Open VS Code, go to PlatformIO Home, and select **Open Project**.
+3. Select this project's root folder (`AG_DCC`).
+4. In the PlatformIO Environment Switcher (bottom toolbar), choose your target:
+   - `env:esp32dev` (for standard ESP32 boards)
+   - `env:esp32c3` (for ESP32-C3 dev boards)
+5. Click **Build** (checkmark icon) or **Upload and Monitor** (arrow & plug icons) to flash and observe real-time console logs!
