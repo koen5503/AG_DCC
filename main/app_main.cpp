@@ -12,6 +12,8 @@
  */
 
 #include "DccRmtTransmitter.hpp"
+#include "WifiManager.hpp"
+#include "WebServer.hpp"
 #include <esp_log.h>
 #include <esp_system.h>
 #include <freertos/FreeRTOS.h>
@@ -129,8 +131,14 @@ extern "C" void app_main() {
     // Print oscilloscope setup instructions
     print_oscilloscope_safety_warning();
 
-    // Create and configure our standalone transmitter
-    dcc::rmt::DccRmtTransmitter transmitter;
+    // 1. Initialize Wi-Fi and Non-Volatile Storage (NVS)
+    ESP_LOGI(TAG, "Initializing Wi-Fi Manager...");
+    static dcc::wifi::WifiManager wifi_manager;
+    wifi_manager.init();
+
+    // 2. Create and configure our standalone transmitter
+    ESP_LOGI(TAG, "Initializing DCC RMT Transmitter...");
+    static dcc::rmt::DccRmtTransmitter transmitter;
     dcc::rmt::TransmitterConfig config;
     
     config.gpio_num = DCC_GPIO_PIN;
@@ -149,112 +157,33 @@ extern "C" void app_main() {
         return;
     }
 
-    ESP_LOGI(TAG, "Testing scenarios started. Observe GPIO %d on your oscilloscope.", DCC_GPIO_PIN);
+    // 3. Initialize and start Embedded Web Server
+    ESP_LOGI(TAG, "Initializing Embedded Web Server...");
+    static dcc::web::WebServer web_server(&transmitter, &wifi_manager);
+    if (!web_server.start()) {
+        ESP_LOGE(TAG, "Failed to start Web Server. Aborting.");
+        return;
+    }
 
-    uint8_t speed_step = 0;
-    bool direction_forward = true;
+    ESP_LOGI(TAG, "===============================================================");
+    ESP_LOGI(TAG, "          DCC RMT WEB COMMAND CENTER RUNNING!");
+    ESP_LOGI(TAG, "===============================================================");
+    if (wifi_manager.isApMode()) {
+        ESP_LOGI(TAG, "  Mode:   Access Point (AP)");
+        ESP_LOGI(TAG, "  SSID:   ESP32-DCC-Controller-[MAC]");
+        ESP_LOGI(TAG, "  Pass:   dcccontrol");
+    } else {
+        ESP_LOGI(TAG, "  Mode:   Station (STA)");
+        ESP_LOGI(TAG, "  SSID:   %s", wifi_manager.getConnectedSsid().c_str());
+    }
+    ESP_LOGI(TAG, "  URL:    http://%s/", wifi_manager.getIpAddress().c_str());
+    ESP_LOGI(TAG, "===============================================================");
 
+    // Heartbeat loop
     while (true) {
-        // ---------------------------------------------------------------------
-        // TEST SCENARIO 1: Continuous Idle Packets (Baseline)
-        // ---------------------------------------------------------------------
-        ESP_LOGI(TAG, "[SCENARIO 1] Transmitting continuous DCC Idle Packets for 5 seconds...");
-        ESP_LOGI(TAG, " -> Waveform expected: continuous [0xFF, 0x00, 0xFF] trains (with 18-bit preambles).");
-        ESP_LOGI(TAG, " -> Trigger scope on negative edge of GPIO %d.", DCC_GPIO_PIN);
-        
-        // The FreeRTOS task handles this automatically when we send nothing to the queue.
-        vTaskDelay(pdMS_TO_TICKS(5000));
-
-        // ---------------------------------------------------------------------
-        // TEST SCENARIO 2: Locomotive Speed Packets (Varying Speed/Direction)
-        // ---------------------------------------------------------------------
-        ESP_LOGI(TAG, "[SCENARIO 2] Transmitting varying Locomotive Speed Commands for 5 seconds...");
-        for (int i = 0; i < 50; ++i) {
-            // Speed packet payload for Locomotive Address 3 (Standard default DCC address)
-            // Address = 0x03
-            // Speed Instruction byte format: 0b01DCSSSS (D=Direction, C=Speed Step format, SSSS=Speed)
-            uint8_t speed_byte = 0b01000000; // Base speed command
-            if (direction_forward) {
-                speed_byte |= 0b00100000; // Forward direction bit
-            }
-            
-            // Map 28-step speed steps into standard DCC byte format
-            speed_byte |= (speed_step & 0x0F); 
-            
-            uint8_t raw_payload[4];
-            raw_payload[0] = 0x03;                       // Address
-            raw_payload[1] = 0x3F;                       // Instruction Group (128 Speed Step prefix or 28 Step toggle)
-            raw_payload[2] = speed_byte;                 // Speed step data
-            raw_payload[3] = calculate_dcc_checksum(raw_payload, 3); // XOR Error Byte
-
-            ESP_LOGI(TAG, "Sending speed packet: [0x%02X, 0x%02X, 0x%02X] Checksum: 0x%02X (Dir: %s, Speed: %d/28)",
-                     raw_payload[0], raw_payload[1], raw_payload[2], raw_payload[3],
-                     direction_forward ? "FWD" : "REV", speed_step);
-
-            transmitter.sendPacket(raw_payload, sizeof(raw_payload));
-
-            // Increment speed cycle
-            speed_step++;
-            if (speed_step > 28) {
-                speed_step = 1;
-                direction_forward = !direction_forward;
-            }
-
-            vTaskDelay(pdMS_TO_TICKS(100)); // Feed a packet every 100ms
-        }
-
-        // ---------------------------------------------------------------------
-        // TEST SCENARIO 3: Accessory / Switch Commands
-        // ---------------------------------------------------------------------
-        ESP_LOGI(TAG, "[SCENARIO 3] Transmitting Accessory (Switch) Commands for 3 seconds...");
-        for (int i = 0; i < 6; ++i) {
-            // Accessory decoder packet format: [10AAAAAA, 1AAACDDD]
-            // Turn switch on and off (CDDD toggles)
-            uint8_t raw_payload[3];
-            raw_payload[0] = 0x80; // Accessory base address (binary 10000000)
-            raw_payload[1] = (i % 2 == 0) ? 0xF8 : 0xF0; // Alternates switch state
-            raw_payload[2] = calculate_dcc_checksum(raw_payload, 2);
-
-            ESP_LOGI(TAG, "Sending accessory packet: [0x%02X, 0x%02X] Checksum: 0x%02X (Switch: %s)",
-                     raw_payload[0], raw_payload[1], raw_payload[2],
-                     (i % 2 == 0) ? "ON" : "OFF");
-
-            transmitter.sendPacket(raw_payload, sizeof(raw_payload));
-            vTaskDelay(pdMS_TO_TICKS(500)); // Every 500ms
-        }
-
-        // ---------------------------------------------------------------------
-        // TEST SCENARIO 4: BiDi (Bidirectional) Cutout Toggle
-        // ---------------------------------------------------------------------
-        ESP_LOGI(TAG, "[SCENARIO 4] Toggling BiDi Cutout to show timing changes on the oscilloscope...");
-        
-        // Reinitialize transmitter with BiDi ENABLED
-        ESP_LOGI(TAG, " -> Re-initializing transmitter with BiDi cutout ENABLED...");
-        config.enable_bidi = true;
-        transmitter.init(config);
-        
-        // Feed locomotive speed packet to verify waveforms
-        for (int i = 0; i < 20; ++i) {
-            uint8_t raw_payload[4] = { 0x03, 0x3F, 0x1A, 0x00 };
-            raw_payload[3] = calculate_dcc_checksum(raw_payload, 3);
-            transmitter.sendPacket(raw_payload, sizeof(raw_payload));
-            
-            ESP_LOGI(TAG, "[BiDi ENABLED] Transmitting active packet. Scope will show a 240 µs flat/zero cutout zone after the end-bit.");
-            vTaskDelay(pdMS_TO_TICKS(150));
-        }
-
-        // Reinitialize transmitter with BiDi DISABLED
-        ESP_LOGI(TAG, " -> Re-initializing transmitter with BiDi cutout DISABLED...");
-        config.enable_bidi = false;
-        transmitter.init(config);
-        
-        for (int i = 0; i < 20; ++i) {
-            uint8_t raw_payload[4] = { 0x03, 0x3F, 0x1A, 0x00 };
-            raw_payload[3] = calculate_dcc_checksum(raw_payload, 3);
-            transmitter.sendPacket(raw_payload, sizeof(raw_payload));
-            
-            ESP_LOGI(TAG, "[BiDi DISABLED] Transmitting active packet. Scope will show normal end-bit immediately transitioning to idle/preamble.");
-            vTaskDelay(pdMS_TO_TICKS(150));
-        }
+        ESP_LOGI(TAG, "System Heartbeat | IP: %s | Mode: %s", 
+                 wifi_manager.getIpAddress().c_str(),
+                 wifi_manager.isApMode() ? "APSTA" : "STA");
+        vTaskDelay(pdMS_TO_TICKS(10000));
     }
 }
