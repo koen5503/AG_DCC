@@ -40,6 +40,15 @@ typedef struct {
   } flags;
 } local_dcc_encoder_config_t;
 
+typedef enum {
+  DCC_STATE_BIDI,
+  DCC_STATE_ZIMO0,
+  DCC_STATE_PREAMBLE,
+  DCC_STATE_START,
+  DCC_STATE_DATA,
+  DCC_STATE_END
+} dcc_encoder_state_t;
+
 /// DCC custom encoder state structure
 typedef struct {
   rmt_encoder_t base;
@@ -51,7 +60,7 @@ typedef struct {
   rmt_symbol_word_t end_symbol;
   size_t num_preamble_symbols;
   size_t num_symbols;
-  enum { BiDi, Zimo0, Preamble, Start, Data, End } state;
+  dcc_encoder_state_t state;
   struct {
     bool zimo0 : 1;
   } flags;
@@ -80,12 +89,12 @@ static size_t RMT_IRAM_ATTR rmt_encode_dcc_bidi(rmt_dcc_encoder_t* dcc_encoder,
 
   // Skip if duration is 0
   if (!dcc_encoder->bidi_symbol.duration0) {
-    state |= RMT_ENCODING_COMPLETE;
-    dcc_encoder->state = Zimo0;
+    state = static_cast<rmt_encode_state_t>(state | RMT_ENCODING_COMPLETE);
+    dcc_encoder->state = DCC_STATE_ZIMO0;
   }
   // Encode 4 BiDi cutout symbols
   else {
-    while (dcc_encoder->state == BiDi) {
+    while (dcc_encoder->state == DCC_STATE_BIDI) {
       size_t const tmp = copy_encoder->encode(copy_encoder,
                                               channel,
                                               &dcc_encoder->bidi_symbol,
@@ -96,7 +105,7 @@ static size_t RMT_IRAM_ATTR rmt_encode_dcc_bidi(rmt_dcc_encoder_t* dcc_encoder,
       if (state & RMT_ENCODING_COMPLETE &&
           dcc_encoder->num_symbols >= 8u / 2u) {
         dcc_encoder->num_symbols = 0u;
-        dcc_encoder->state = Zimo0;
+        dcc_encoder->state = DCC_STATE_ZIMO0;
       }
       if (state & RMT_ENCODING_MEM_FULL) break;
     }
@@ -115,14 +124,14 @@ rmt_encode_dcc_zimo0(rmt_dcc_encoder_t* dcc_encoder,
 
   // Skip
   if (!dcc_encoder->flags.zimo0) {
-    state |= RMT_ENCODING_COMPLETE;
-    dcc_encoder->state = Preamble;
+    state = static_cast<rmt_encode_state_t>(state | RMT_ENCODING_COMPLETE);
+    dcc_encoder->state = DCC_STATE_PREAMBLE;
   }
   // Encode ZIMO 0
   else {
     encoded_symbols += rmt_encode_dcc_bit(
       dcc_encoder, channel, &state, &dcc_encoder->zero_symbol);
-    if (state & RMT_ENCODING_COMPLETE) dcc_encoder->state = Preamble;
+    if (state & RMT_ENCODING_COMPLETE) dcc_encoder->state = DCC_STATE_PREAMBLE;
   }
 
   *ret_state = state;
@@ -137,7 +146,7 @@ rmt_encode_dcc_preamble(rmt_dcc_encoder_t* dcc_encoder,
   rmt_encode_state_t state = RMT_ENCODING_RESET;
   rmt_encoder_handle_t copy_encoder = dcc_encoder->copy_encoder;
 
-  while (dcc_encoder->state == Preamble) {
+  while (dcc_encoder->state == DCC_STATE_PREAMBLE) {
     size_t const tmp = copy_encoder->encode(copy_encoder,
                                             channel,
                                             &dcc_encoder->one_symbol,
@@ -148,7 +157,7 @@ rmt_encode_dcc_preamble(rmt_dcc_encoder_t* dcc_encoder,
     if (state & RMT_ENCODING_COMPLETE &&
         dcc_encoder->num_symbols >= dcc_encoder->num_preamble_symbols) {
       dcc_encoder->num_symbols = 0u;
-      dcc_encoder->state = Start;
+      dcc_encoder->state = DCC_STATE_START;
     }
     if (state & RMT_ENCODING_MEM_FULL) break;
   }
@@ -165,7 +174,7 @@ rmt_encode_dcc_start(rmt_dcc_encoder_t* dcc_encoder,
   rmt_encode_state_t state = RMT_ENCODING_RESET;
   encoded_symbols +=
     rmt_encode_dcc_bit(dcc_encoder, channel, &state, &dcc_encoder->zero_symbol);
-  if (state & RMT_ENCODING_COMPLETE) dcc_encoder->state = Data;
+  if (state & RMT_ENCODING_COMPLETE) dcc_encoder->state = DCC_STATE_DATA;
   *ret_state = state;
   return encoded_symbols;
 }
@@ -191,7 +200,7 @@ static size_t RMT_IRAM_ATTR rmt_encode_dcc_data(rmt_dcc_encoder_t* dcc_encoder,
   if (state & RMT_ENCODING_COMPLETE &&
       dcc_encoder->num_symbols >= data_size * CHAR_BIT) {
     dcc_encoder->num_symbols = 0u;
-    dcc_encoder->state = End;
+    dcc_encoder->state = DCC_STATE_END;
   }
 
   *ret_state = state;
@@ -207,7 +216,7 @@ static size_t RMT_IRAM_ATTR rmt_encode_dcc_end(rmt_dcc_encoder_t* dcc_encoder,
     rmt_encode_dcc_bit(dcc_encoder, channel, &state, &dcc_encoder->end_symbol);
   if (state & RMT_ENCODING_COMPLETE) {
     dcc_encoder->num_symbols = 0u;
-    dcc_encoder->state = BiDi;
+    dcc_encoder->state = DCC_STATE_BIDI;
   }
   *ret_state = state;
   return encoded_symbols;
@@ -225,59 +234,59 @@ static size_t RMT_IRAM_ATTR rmt_encode_dcc(rmt_encoder_t* encoder,
     __containerof(encoder, rmt_dcc_encoder_t, base);
 
   switch (dcc_encoder->state) {
-    case BiDi:
+    case DCC_STATE_BIDI:
       encoded_symbols +=
         rmt_encode_dcc_bidi(dcc_encoder, channel, &session_state);
       if (session_state & RMT_ENCODING_MEM_FULL) {
-        state |= RMT_ENCODING_MEM_FULL;
+        state = static_cast<rmt_encode_state_t>(state | RMT_ENCODING_MEM_FULL);
         break;
       }
       // fallthrough
 
-    case Zimo0:
+    case DCC_STATE_ZIMO0:
       encoded_symbols +=
         rmt_encode_dcc_zimo0(dcc_encoder, channel, &session_state);
       if (session_state & RMT_ENCODING_MEM_FULL) {
-        state |= RMT_ENCODING_MEM_FULL;
+        state = static_cast<rmt_encode_state_t>(state | RMT_ENCODING_MEM_FULL);
         break;
       }
       // fallthrough
 
-    case Preamble:
+    case DCC_STATE_PREAMBLE:
       encoded_symbols +=
         rmt_encode_dcc_preamble(dcc_encoder, channel, &session_state);
       if (session_state & RMT_ENCODING_MEM_FULL) {
-        state |= RMT_ENCODING_MEM_FULL;
+        state = static_cast<rmt_encode_state_t>(state | RMT_ENCODING_MEM_FULL);
         break;
       }
       // fallthrough
 
-    case Start:
+    case DCC_STATE_START:
     start:
       encoded_symbols +=
         rmt_encode_dcc_start(dcc_encoder, channel, &session_state);
       if (session_state & RMT_ENCODING_MEM_FULL) {
-        state |= RMT_ENCODING_MEM_FULL;
+        state = static_cast<rmt_encode_state_t>(state | RMT_ENCODING_MEM_FULL);
         break;
       }
       // fallthrough
 
-    case Data:
+    case DCC_STATE_DATA:
       encoded_symbols += rmt_encode_dcc_data(
         dcc_encoder, channel, primary_data, data_size, &session_state);
       if (session_state & RMT_ENCODING_MEM_FULL) {
-        state |= RMT_ENCODING_MEM_FULL;
+        state = static_cast<rmt_encode_state_t>(state | RMT_ENCODING_MEM_FULL);
         break;
       }
-      if (dcc_encoder->state < End) goto start;
+      if (dcc_encoder->state < DCC_STATE_END) goto start;
       // fallthrough
 
-    case End:
+    case DCC_STATE_END:
       encoded_symbols +=
         rmt_encode_dcc_end(dcc_encoder, channel, &session_state);
-      if (session_state & RMT_ENCODING_COMPLETE) state |= RMT_ENCODING_COMPLETE;
+      if (session_state & RMT_ENCODING_COMPLETE) state = static_cast<rmt_encode_state_t>(state | RMT_ENCODING_COMPLETE);
       if (session_state & RMT_ENCODING_MEM_FULL) {
-        state |= RMT_ENCODING_MEM_FULL;
+        state = static_cast<rmt_encode_state_t>(state | RMT_ENCODING_MEM_FULL);
         break;
       }
       // fallthrough
@@ -302,7 +311,7 @@ static esp_err_t RMT_IRAM_ATTR rmt_dcc_encoder_reset(rmt_encoder_t* encoder) {
   rmt_encoder_reset(dcc_encoder->copy_encoder);
   rmt_encoder_reset(dcc_encoder->bytes_encoder);
   dcc_encoder->num_symbols = 0u;
-  dcc_encoder->state = Zimo0;
+  dcc_encoder->state = DCC_STATE_ZIMO0;
   return ESP_OK;
 }
 
@@ -310,6 +319,8 @@ static esp_err_t rmt_new_dcc_encoder(local_dcc_encoder_config_t const* config,
                                      rmt_encoder_handle_t* ret_encoder) {
   esp_err_t ret = ESP_OK;
   rmt_dcc_encoder_t* dcc_encoder = NULL;
+  rmt_copy_encoder_config_t copy_encoder_config = {};
+  rmt_bytes_encoder_config_t bytes_encoder_config = {};
   
   ESP_GOTO_ON_FALSE(
     config && ret_encoder &&                                        //
@@ -337,7 +348,7 @@ static esp_err_t rmt_new_dcc_encoder(local_dcc_encoder_config_t const* config,
   dcc_encoder->base.del = rmt_del_dcc_encoder;
   dcc_encoder->base.reset = rmt_dcc_encoder_reset;
 
-  rmt_copy_encoder_config_t copy_encoder_config = {};
+  copy_encoder_config = {};
   ESP_GOTO_ON_ERROR(
     rmt_new_copy_encoder(&copy_encoder_config, &dcc_encoder->copy_encoder),
     err,
@@ -356,7 +367,7 @@ static esp_err_t rmt_new_dcc_encoder(local_dcc_encoder_config_t const* config,
       .level1 = static_cast<uint16_t>(!config->flags.level0),
     };
   } else {
-    dcc_encoder->bidi_symbol = (rmt_symbol_word_t){0};
+    dcc_encoder->bidi_symbol.val = 0;
   }
 
   dcc_encoder->one_symbol = (rmt_symbol_word_t){
@@ -379,16 +390,15 @@ static esp_err_t rmt_new_dcc_encoder(local_dcc_encoder_config_t const* config,
   };
 
   // Initial state
-  dcc_encoder->state = Zimo0;
+  dcc_encoder->state = DCC_STATE_ZIMO0;
 
   // Flags
   dcc_encoder->flags.zimo0 = config->flags.zimo0;
 
-  rmt_bytes_encoder_config_t bytes_encoder_config = {
-    .bit1 = dcc_encoder->one_symbol,
-    .bit0 = dcc_encoder->zero_symbol,
-    .flags = { .msb_first = true }
-  };
+  bytes_encoder_config = {};
+  bytes_encoder_config.bit0 = dcc_encoder->zero_symbol;
+  bytes_encoder_config.bit1 = dcc_encoder->one_symbol;
+  bytes_encoder_config.flags.msb_first = true;
   
   ESP_GOTO_ON_ERROR(
     rmt_new_bytes_encoder(&bytes_encoder_config, &dcc_encoder->bytes_encoder),
@@ -421,7 +431,6 @@ DccRmtTransmitter::DccRmtTransmitter()
       m_packet_queue(nullptr),
       m_task_handle(nullptr),
       m_initialized(false) {
-    std::memset(&m_config, 0, sizeof(m_config));
 }
 
 DccRmtTransmitter::~DccRmtTransmitter() {
@@ -447,18 +456,15 @@ bool DccRmtTransmitter::init(const TransmitterConfig& config) {
     // 1. Allocate RMT TX Channel
     // We configure a 1MHz clock so that 1 tick = 1 microsecond.
     // 64 memory symbols is sufficient and extremely safe for all chips (including ESP32-C3).
-    rmt_tx_channel_config_t rmt_chan_config = {
-        .gpio_num = static_cast<gpio_num_t>(m_config.gpio_num),
-        .clk_src = RMT_CLK_SRC_DEFAULT,
-        .resolution_hz = 1000000, // 1 MHz -> 1 tick = 1 µs
-        .mem_block_symbols = 64,  // Safe memory block size
-        .trans_queue_depth = 2,   // Allows double-buffering (gapless transmit)
-        .intr_priority = 0,
-        .flags = {
-            .invert_out = 0,
-            .with_dma = 0
-        }
-    };
+    rmt_tx_channel_config_t rmt_chan_config = {};
+    rmt_chan_config.gpio_num = static_cast<gpio_num_t>(m_config.gpio_num);
+    rmt_chan_config.clk_src = RMT_CLK_SRC_DEFAULT;
+    rmt_chan_config.resolution_hz = 1000000; // 1 MHz -> 1 tick = 1 µs
+    rmt_chan_config.mem_block_symbols = 64;  // Safe memory block size
+    rmt_chan_config.trans_queue_depth = 2;   // Allows double-buffering (gapless transmit)
+    rmt_chan_config.intr_priority = 0;
+    rmt_chan_config.flags.invert_out = 0;
+    rmt_chan_config.flags.with_dma = 0;
 
     esp_err_t err = rmt_new_tx_channel(&rmt_chan_config, &m_rmt_channel);
     if (err != ESP_OK) {

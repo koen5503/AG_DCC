@@ -19,6 +19,8 @@
 #include <driver/gpio.h>
 #include <esp_vfs_dev.h>
 #include <driver/uart.h>
+#include <driver/uart_vfs.h>
+#include <driver/usb_serial_jtag_vfs.h>
 #include <cstring>
 
 static const char* TAG = "DccAppMain";
@@ -59,12 +61,12 @@ void configure_serial_logging() {
     // In this mode, no physical UART hardware initialization is needed,
     // as it is handled by the ESP32-C3 ROM and driver.
     // Initialize USB-Serial-JTAG driver for virtual terminal capabilities
-    esp_vfs_dev_usb_serial_jtag_set_rx_line_endings(ESP_LINE_ENDINGS_CRLF);
-    esp_vfs_dev_usb_serial_jtag_set_tx_line_endings(ESP_LINE_ENDINGS_CRLF);
+    usb_serial_jtag_vfs_set_rx_line_endings(ESP_LINE_ENDINGS_CRLF);
+    usb_serial_jtag_vfs_set_tx_line_endings(ESP_LINE_ENDINGS_CRLF);
 #else
     // Logging is configured via physical UART0
-    esp_vfs_dev_uart_port_set_rx_line_endings(0, ESP_LINE_ENDINGS_CRLF);
-    esp_vfs_dev_uart_port_set_tx_line_endings(0, ESP_LINE_ENDINGS_CRLF);
+    uart_vfs_dev_port_set_rx_line_endings(0, ESP_LINE_ENDINGS_CRLF);
+    uart_vfs_dev_port_set_tx_line_endings(0, ESP_LINE_ENDINGS_CRLF);
 #endif
 
     // Flush any leftover startup bootloader messages
