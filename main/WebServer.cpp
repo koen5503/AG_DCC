@@ -14,6 +14,9 @@
 #include <sstream>
 #include <algorithm>
 #include <cstring>
+#include <atomic>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 static const char* TAG = "WebServer";
 
@@ -110,6 +113,15 @@ bool WebServer::start() {
         .user_ctx = this
     };
     httpd_register_uri_handler(m_server_handle, &accessory_uri);
+
+    // Register POST /api/test
+    httpd_uri_t test_uri = {
+        .uri      = "/api/test",
+        .method   = HTTP_POST,
+        .handler  = testPostHandler,
+        .user_ctx = this
+    };
+    httpd_register_uri_handler(m_server_handle, &test_uri);
 
     ESP_LOGI(TAG, "Web server started successfully and endpoints registered.");
     return true;
@@ -381,6 +393,167 @@ esp_err_t WebServer::accessoryPostHandler(httpd_req_t* req) {
     cJSON_AddItemToObject(resp, "bytes", bytes_arr);
 
     char* resp_str = cJSON_PrintUnformatted(resp);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, resp_str);
+    
+    cJSON_free(resp_str);
+    cJSON_Delete(resp);
+    return ESP_OK;
+}
+
+static std::atomic<bool> s_test_running{false};
+
+struct TestTaskParams {
+    int scenario_id;
+    dcc::rmt::DccRmtTransmitter* transmitter;
+};
+
+static void test_scenario_task(void* pvParameters) {
+    auto* params = static_cast<TestTaskParams*>(pvParameters);
+    int scenario = params->scenario_id;
+    auto* transmitter = params->transmitter;
+
+    ESP_LOGI("DccTestRunner", "Starting autonomous test scenario %d...", scenario);
+
+    if (scenario == 1) {
+        // Continuous Idle Packets (Baseline) for 5 seconds
+        // RMT Transmitter automatically transmits continuous DCC Idle Packets when queue is empty.
+        vTaskDelay(pdMS_TO_TICKS(5000));
+    }
+    else if (scenario == 2) {
+        // Locomotive Speed Packets (Varying Speed/Direction)
+        uint8_t speed_step = 1;
+        bool direction_forward = true;
+        for (int i = 0; i < 50; ++i) {
+            uint8_t speed_byte = 0b01000000;
+            if (direction_forward) {
+                speed_byte |= 0b00100000;
+            }
+            speed_byte |= (speed_step & 0x0F);
+            
+            uint8_t raw_payload[4];
+            raw_payload[0] = 0x03;                       // Address 3
+            raw_payload[1] = 0x3F;                       // 128 speed prefix
+            raw_payload[2] = speed_byte;                 // Speed data
+            raw_payload[3] = raw_payload[0] ^ raw_payload[1] ^ raw_payload[2];
+
+            transmitter->sendPacket(raw_payload, sizeof(raw_payload));
+
+            speed_step++;
+            if (speed_step > 28) {
+                speed_step = 1;
+                direction_forward = !direction_forward;
+            }
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+    }
+    else if (scenario == 3) {
+        // Accessory / Switch Commands
+        for (int i = 0; i < 6; ++i) {
+            uint8_t raw_payload[3];
+            raw_payload[0] = 0x80;
+            raw_payload[1] = (i % 2 == 0) ? 0xF8 : 0xF0;
+            raw_payload[2] = raw_payload[0] ^ raw_payload[1];
+
+            transmitter->sendPacket(raw_payload, sizeof(raw_payload));
+            vTaskDelay(pdMS_TO_TICKS(500));
+        }
+    }
+    else if (scenario == 4) {
+        // BiDi (Bidirectional) Cutout Timing Probe
+        if (transmitter->isInitialized()) {
+            auto original_config = transmitter->getConfig();
+            
+            // Reinitialize with BiDi enabled
+            auto bidi_config = original_config;
+            bidi_config.enable_bidi = true;
+            transmitter->deinit();
+            transmitter->init(bidi_config);
+
+            // Feed standard packets
+            for (int i = 0; i < 15; ++i) {
+                uint8_t raw_payload[4] = { 0x03, 0x3F, 0x1A, 0x00 };
+                raw_payload[3] = raw_payload[0] ^ raw_payload[1] ^ raw_payload[2];
+                transmitter->sendPacket(raw_payload, sizeof(raw_payload));
+                vTaskDelay(pdMS_TO_TICKS(150));
+            }
+
+            // Restore/Reinitialize with BiDi disabled
+            transmitter->deinit();
+            transmitter->init(original_config);
+
+            // Feed standard packets
+            for (int i = 0; i < 15; ++i) {
+                uint8_t raw_payload[4] = { 0x03, 0x3F, 0x1A, 0x00 };
+                raw_payload[3] = raw_payload[0] ^ raw_payload[1] ^ raw_payload[2];
+                transmitter->sendPacket(raw_payload, sizeof(raw_payload));
+                vTaskDelay(pdMS_TO_TICKS(150));
+            }
+        }
+    }
+
+    ESP_LOGI("DccTestRunner", "Autonomous test scenario %d completed successfully.", scenario);
+    s_test_running = false;
+    delete params;
+    vTaskDelete(NULL);
+}
+
+esp_err_t WebServer::testPostHandler(httpd_req_t* req) {
+    auto* self = static_cast<WebServer*>(req->user_ctx);
+    std::string body = read_post_body(req);
+    
+    cJSON* json = cJSON_Parse(body.c_str());
+    if (!json) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+
+    cJSON* sc_item = cJSON_GetObjectItem(json, "scenario");
+    if (!sc_item || !cJSON_IsNumber(sc_item)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid scenario ID");
+        return ESP_FAIL;
+    }
+
+    int scenario = sc_item->valueint;
+    cJSON_Delete(json);
+
+    if (scenario < 1 || scenario > 4) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Scenario ID must be between 1 and 4");
+        return ESP_FAIL;
+    }
+
+    bool expected = false;
+    if (!s_test_running.compare_exchange_strong(expected, true)) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "A test scenario is already active");
+        return ESP_FAIL;
+    }
+
+    auto* params = new TestTaskParams();
+    params->scenario_id = scenario;
+    params->transmitter = self->m_transmitter;
+
+    BaseType_t task_ret = xTaskCreate(
+        test_scenario_task,
+        "dcc_test_task",
+        3072,
+        params,
+        configMAX_PRIORITIES - 2, // Slightly lower than main DCC task to prevent interrupt blockages
+        NULL
+    );
+
+    if (task_ret != pdPASS) {
+        s_test_running = false;
+        delete params;
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to launch test scenario task");
+        return ESP_FAIL;
+    }
+
+    cJSON* resp = cJSON_CreateObject();
+    cJSON_AddStringToObject(resp, "status", "ok");
+    cJSON_AddStringToObject(resp, "message", "Test scenario successfully launched in background");
+    char* resp_str = cJSON_PrintUnformatted(resp);
+
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, resp_str);
     

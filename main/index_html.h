@@ -731,6 +731,20 @@ const char INDEX_HTML[] = R"rawhtml(
                 </div>
             </div>
 
+            <!-- Diagnostics & Test Scenarios -->
+            <div style="margin-top: 15px; margin-bottom: 15px;">
+                <div class="panel-title" style="margin-bottom: 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); padding-bottom: 5px; font-size: 14px;">
+                    Diagnostics & Test Scenarios
+                    <span>Select an autonomous routine to probe the track on your scope</span>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                    <button class="btn btn-func" style="font-size: 11px; padding: 6px 4px; background: rgba(59, 130, 246, 0.1); border-color: rgba(59, 130, 246, 0.25);" onclick="triggerTest(1)">🔍 Idle Packets (5s)</button>
+                    <button class="btn btn-func" style="font-size: 11px; padding: 6px 4px; background: rgba(59, 130, 246, 0.1); border-color: rgba(59, 130, 246, 0.25);" onclick="triggerTest(2)">⚡ Speed Sweep (5s)</button>
+                    <button class="btn btn-func" style="font-size: 11px; padding: 6px 4px; background: rgba(59, 130, 246, 0.1); border-color: rgba(59, 130, 246, 0.25);" onclick="triggerTest(3)">🎛️ Turnout Toggles (3s)</button>
+                    <button class="btn btn-func" style="font-size: 11px; padding: 6px 4px; background: rgba(59, 130, 246, 0.1); border-color: rgba(59, 130, 246, 0.25);" onclick="triggerTest(4)">📡 BiDi Cutout (5s)</button>
+                </div>
+            </div>
+
             <!-- Outgoing telemetry logs -->
             <div class="console-container">
                 <div class="panel-title" style="border: none; padding-bottom: 0;">
@@ -925,6 +939,29 @@ const char INDEX_HTML[] = R"rawhtml(
             })
             .catch(err => {
                 console.error('Error sending accessory command:', err);
+            });
+        }
+
+        // Trigger autonomous diagnostics test scenarios
+        function triggerTest(scenarioId) {
+            logTelemetry('TEST', `Launching Test Scenario ${scenarioId} in background...`, []);
+            
+            fetch('/api/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ scenario: scenarioId })
+            })
+            .then(res => {
+                if (!res.ok) {
+                    return res.text().then(text => { throw new Error(text || 'Server error'); });
+                }
+                return res.json();
+            })
+            .then(data => {
+                logTelemetry('TEST', `Success: ${data.message}`, []);
+            })
+            .catch(err => {
+                logTelemetry('TEST', `Error: ${err.message}`, []);
             });
         }
 

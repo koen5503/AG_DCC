@@ -56,6 +56,7 @@ private:
     static esp_err_t wifiConfigPostHandler(httpd_req_t* req);
     static esp_err_t locoGetPostHandler(httpd_req_t* req);
     static esp_err_t accessoryPostHandler(httpd_req_t* req);
+    static esp_err_t testPostHandler(httpd_req_t* req);
 
     dcc::rmt::DccRmtTransmitter* m_transmitter;
     dcc::wifi::WifiManager* m_wifi_manager;

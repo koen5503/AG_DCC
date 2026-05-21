@@ -109,6 +109,11 @@ public:
      */
     bool isInitialized() const { return m_initialized; }
 
+    /**
+     * @brief Get the current transmitter configuration
+     */
+    const TransmitterConfig& getConfig() const { return m_config; }
+
 private:
     /// Maximum size of a single DCC packet in bytes (based on DCC standards)
     static constexpr size_t MAX_DCC_PACKET_SIZE = 18;
