@@ -41,9 +41,10 @@ static std::string read_post_body(httpd_req_t* req) {
     return body;
 }
 
-WebServer::WebServer(dcc::rmt::DccRmtTransmitter* transmitter, dcc::wifi::WifiManager* wifi_manager)
+WebServer::WebServer(dcc::rmt::DccRmtTransmitter* transmitter, dcc::wifi::WifiManager* wifi_manager, dcc::rx::DccDecoder* decoder)
     : m_transmitter(transmitter),
       m_wifi_manager(wifi_manager),
+      m_decoder(decoder),
       m_server_handle(nullptr) {
 }
 
@@ -60,7 +61,7 @@ bool WebServer::start() {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     // Allow more open sockets or stack if needed
     config.stack_size = 4096;
-    config.max_uri_handlers = 8;
+    config.max_uri_handlers = 10;
     config.lru_purge_enable = true;
 
     ESP_LOGI(TAG, "Starting web server on port: %d", config.server_port);
@@ -122,6 +123,15 @@ bool WebServer::start() {
         .user_ctx = this
     };
     httpd_register_uri_handler(m_server_handle, &test_uri);
+
+    // Register GET /api/decoder
+    httpd_uri_t decoder_uri = {
+        .uri      = "/api/decoder",
+        .method   = HTTP_GET,
+        .handler  = decoderGetHandler,
+        .user_ctx = this
+    };
+    httpd_register_uri_handler(m_server_handle, &decoder_uri);
 
     ESP_LOGI(TAG, "Web server started successfully and endpoints registered.");
     return true;
@@ -560,6 +570,70 @@ esp_err_t WebServer::testPostHandler(httpd_req_t* req) {
     cJSON_free(resp_str);
     cJSON_Delete(resp);
     return ESP_OK;
+}
+
+esp_err_t WebServer::decoderGetHandler(httpd_req_t* req) {
+    auto* self = static_cast<WebServer*>(req->user_ctx);
+    
+    // Set headers
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+
+    cJSON* root = cJSON_CreateObject();
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to create JSON object");
+        return ESP_FAIL;
+    }
+
+    if (self->m_decoder == nullptr) {
+        cJSON_AddBoolToObject(root, "active", false);
+        cJSON_AddStringToObject(root, "status", "Not Integrated");
+        cJSON_AddNumberToObject(root, "pin", -1);
+        cJSON_AddNumberToObject(root, "success_count", 0);
+        cJSON_AddNumberToObject(root, "error_count", 0);
+        cJSON_AddArrayToObject(root, "packets");
+    } else {
+        bool signal_active = self->m_decoder->isSignalActive();
+        cJSON_AddBoolToObject(root, "active", true);
+        cJSON_AddStringToObject(root, "status", signal_active ? "Active" : "No Signal");
+        cJSON_AddNumberToObject(root, "pin", self->m_decoder->getGpioNum());
+        cJSON_AddNumberToObject(root, "success_count", self->m_decoder->getSuccessCount());
+        cJSON_AddNumberToObject(root, "error_count", self->m_decoder->getErrorCount());
+
+        cJSON* packets_arr = cJSON_CreateArray();
+        std::vector<dcc::rx::DecodedPacket> packets = self->m_decoder->getRecentPackets(10);
+        
+        for (const auto& packet : packets) {
+            cJSON* p_obj = cJSON_CreateObject();
+            cJSON_AddNumberToObject(p_obj, "timestamp", packet.timestamp);
+            cJSON_AddBoolToObject(p_obj, "valid", packet.is_valid);
+            cJSON_AddStringToObject(p_obj, "text", packet.human_readable.c_str());
+
+            // Add raw hex data representation
+            char hex_buf[64] = "";
+            for (int i = 0; i < packet.length; ++i) {
+                char byte_hex[8];
+                std::sprintf(byte_hex, "0x%02X ", packet.payload[i]);
+                std::strcat(hex_buf, byte_hex);
+            }
+            cJSON_AddStringToObject(p_obj, "hex", hex_buf);
+            
+            cJSON_AddItemToArray(packets_arr, p_obj);
+        }
+        cJSON_AddItemToObject(root, "packets", packets_arr);
+    }
+
+    char* json_str = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+
+    if (!json_str) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to print JSON");
+        return ESP_FAIL;
+    }
+
+    esp_err_t res = httpd_resp_sendstr(req, json_str);
+    free(json_str);
+    return res;
 }
 
 } // namespace web

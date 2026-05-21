@@ -14,6 +14,7 @@
 #include "DccRmtTransmitter.hpp"
 #include "WifiManager.hpp"
 #include "WebServer.hpp"
+#include "DccDecoder.hpp"
 #include <esp_log.h>
 #include <esp_system.h>
 #include <freertos/FreeRTOS.h>
@@ -31,14 +32,17 @@ static const char* TAG = "DccAppMain";
 // Hardware Mapping Config
 // =============================================================================
 #if CONFIG_IDF_TARGET_ESP32C3
-  // ESP32-C3 default RMT pin
-  #define DCC_GPIO_PIN  GPIO_NUM_8
+  // ESP32-C3 default RMT and Decoder pins (avoids strapping-pin GPIO 9)
+  #define DCC_GPIO_PIN      GPIO_NUM_8
+  #define DCC_DECODER_PIN   GPIO_NUM_10
 #elif CONFIG_IDF_TARGET_ESP32S3
-  // ESP32-S3 default RMT pin
-  #define DCC_GPIO_PIN  GPIO_NUM_18
+  // ESP32-S3 default RMT and Decoder pins
+  #define DCC_GPIO_PIN      GPIO_NUM_18
+  #define DCC_DECODER_PIN   GPIO_NUM_19
 #else
-  // Standard ESP32 default RMT pin
-  #define DCC_GPIO_PIN  GPIO_NUM_21
+  // Standard ESP32 default RMT and Decoder pins
+  #define DCC_GPIO_PIN      GPIO_NUM_21
+  #define DCC_DECODER_PIN   GPIO_NUM_22
 #endif
 
 // =============================================================================
@@ -141,7 +145,13 @@ extern "C" void app_main() {
     static dcc::wifi::WifiManager wifi_manager;
     wifi_manager.init();
 
-    // 2. Create and configure our standalone transmitter
+    // 2. Create and configure our standalone DCC Decoder and Transmitter
+    ESP_LOGI(TAG, "Initializing DCC Decoder on pin %d...", DCC_DECODER_PIN);
+    static dcc::rx::DccDecoder decoder;
+    if (!decoder.init(DCC_DECODER_PIN)) {
+        ESP_LOGE(TAG, "Failed to initialize DCC Decoder! Continuing with transmitter only...");
+    }
+
     ESP_LOGI(TAG, "Initializing DCC RMT Transmitter...");
     static dcc::rmt::DccRmtTransmitter transmitter;
     dcc::rmt::TransmitterConfig config;
@@ -164,7 +174,7 @@ extern "C" void app_main() {
 
     // 3. Initialize and start Embedded Web Server
     ESP_LOGI(TAG, "Initializing Embedded Web Server...");
-    static dcc::web::WebServer web_server(&transmitter, &wifi_manager);
+    static dcc::web::WebServer web_server(&transmitter, &wifi_manager, &decoder);
     if (!web_server.start()) {
         ESP_LOGE(TAG, "Failed to start Web Server. Aborting.");
         return;
@@ -173,6 +183,7 @@ extern "C" void app_main() {
     ESP_LOGI(TAG, "===============================================================");
     ESP_LOGI(TAG, "          DCC RMT WEB COMMAND CENTER RUNNING!");
     ESP_LOGI(TAG, "===============================================================");
+    ESP_LOGI(TAG, "  Loopback Probe: Connect TX pin (%d) to RX pin (%d)!", DCC_GPIO_PIN, DCC_DECODER_PIN);
     if (wifi_manager.isApMode()) {
         ESP_LOGI(TAG, "  Mode:   Access Point (AP)");
         ESP_LOGI(TAG, "  SSID:   ESP32-DCC-Controller-[MAC]");

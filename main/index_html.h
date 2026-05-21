@@ -125,16 +125,16 @@ const char INDEX_HTML[] = R"rawhtml(
         }
 
         .main-container {
-            max-width: 1200px;
+            max-width: 1600px;
             width: 100%;
             margin: 0 auto;
             display: grid;
-            grid-template-columns: 1fr 1fr;
+            grid-template-columns: 1fr 1fr 1fr;
             gap: 20px;
             flex-grow: 1;
         }
 
-        @media (max-width: 900px) {
+        @media (max-width: 1200px) {
             .main-container {
                 grid-template-columns: 1fr;
             }
@@ -760,6 +760,75 @@ const char INDEX_HTML[] = R"rawhtml(
             </div>
         </div>
 
+        <!-- Third Panel: DCC Decoder Monitor -->
+        <div class="panel" style="display: flex; flex-direction: column; justify-content: space-between;">
+            <div>
+                <div class="panel-title" style="margin-bottom: 15px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); padding-bottom: 5px; font-size: 14px;">
+                    DCC Decoder Monitor
+                    <span id="decoder-badge-container">
+                        <span class="status-badge" style="background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.25); color: #ef4444; font-size: 10px; padding: 2px 6px;">
+                            <span class="status-dot" style="background-color: #ef4444; box-shadow: 0 0 8px #ef4444; width: 6px; height: 6px;"></span>
+                            <span id="decoder-status-txt" style="margin-left: 4px;">NO SIGNAL</span>
+                        </span>
+                    </span>
+                </div>
+
+                <!-- Decoder Pin and Stats Grid -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
+                    <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 12px; padding: 10px; text-align: center;">
+                        <div style="font-size: 10px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Decoder Pin</div>
+                        <div id="decoder-pin-val" style="font-size: 16px; font-weight: 700; color: var(--accent-blue); margin-top: 4px;">--</div>
+                    </div>
+                    <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 12px; padding: 10px; text-align: center;">
+                        <div style="font-size: 10px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">CRC Errors</div>
+                        <div id="decoder-errors-val" style="font-size: 16px; font-weight: 700; color: #ef4444; margin-top: 4px;">0</div>
+                    </div>
+                </div>
+
+                <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 12px; padding: 10px; text-align: center; margin-bottom: 15px;">
+                    <div style="font-size: 10px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Total Decoded Packets</div>
+                    <div id="decoder-success-val" style="font-size: 20px; font-weight: 700; color: var(--accent-success); margin-top: 4px;">0</div>
+                </div>
+
+                <!-- Decoded Locomotive HUD -->
+                <div style="background: rgba(59, 130, 246, 0.05); border: 1px solid rgba(59, 130, 246, 0.15); border-radius: 16px; padding: 15px; margin-bottom: 15px;">
+                    <div style="font-size: 11px; color: var(--accent-blue); font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; border-bottom: 1px solid rgba(59, 130, 246, 0.15); padding-bottom: 4px;">
+                        Decoded Locomotive HUD
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span style="font-size: 13px; color: var(--text-secondary);">Loco Address:</span>
+                        <span id="hud-addr" style="font-size: 15px; font-weight: 700; color: white;">None</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span style="font-size: 13px; color: var(--text-secondary);">Decoded Speed:</span>
+                        <span id="hud-speed" style="font-size: 15px; font-weight: 700; color: var(--accent-success);">--</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span style="font-size: 13px; color: var(--text-secondary);">Direction:</span>
+                        <span id="hud-dir" style="font-size: 15px; font-weight: 700; color: white;">--</span>
+                    </div>
+                    <div style="font-size: 13px; color: var(--text-secondary); margin-bottom: 4px;">Function Group Flags:</div>
+                    <div id="hud-funcs" style="font-size: 11px; font-family: monospace; color: var(--text-secondary); background: rgba(0,0,0,0.2); padding: 6px; border-radius: 6px; text-align: center; letter-spacing: 1px;">
+                        F0..F8: --
+                    </div>
+                </div>
+            </div>
+
+            <!-- Incoming Decoded Console -->
+            <div class="console-container">
+                <div class="panel-title" style="border: none; padding-bottom: 0;">
+                    Incoming Decoded Console
+                    <span>Parsed Loopback Packets</span>
+                </div>
+                <div class="console-box" id="decoder-console-box" style="height: 140px;">
+                    <div class="console-line">
+                        <span class="console-time">[00:00:00]</span>
+                        <span>Awaiting loopback signal...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
     </div>
 
     <!-- Wi-Fi Setup Modal -->
@@ -1099,6 +1168,131 @@ const char INDEX_HTML[] = R"rawhtml(
             }, 1000);
         }
 
+        let lastTimestamp = 0;
+        let activeLocoState = { addr: "None", speed: "--", dir: "--", funcs: {} };
+
+        function pollDecoder() {
+            fetch('/api/decoder')
+            .then(res => res.json())
+            .then(data => {
+                if (!data.active) return;
+                
+                // 1. Update Status Badge
+                const badge = document.getElementById('decoder-badge-container');
+                const pinVal = document.getElementById('decoder-pin-val');
+                const successVal = document.getElementById('decoder-success-val');
+                const errorsVal = document.getElementById('decoder-errors-val');
+
+                pinVal.innerText = `GPIO ${data.pin}`;
+                successVal.innerText = data.success_count;
+                errorsVal.innerText = data.error_count;
+
+                if (data.status === "Active") {
+                    badge.innerHTML = `
+                        <span class="status-badge" style="background: rgba(16, 185, 129, 0.1); border-color: rgba(16, 185, 129, 0.25); color: #10b981; font-size: 10px; padding: 2px 6px;">
+                            <span class="status-dot" style="background-color: #10b981; box-shadow: 0 0 8px #10b981; width: 6px; height: 6px;"></span>
+                            <span id="decoder-status-txt" style="margin-left: 4px;">ACTIVE</span>
+                        </span>
+                    `;
+                } else {
+                    badge.innerHTML = `
+                        <span class="status-badge" style="background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.25); color: #ef4444; font-size: 10px; padding: 2px 6px;">
+                            <span class="status-dot" style="background-color: #ef4444; box-shadow: 0 0 8px #ef4444; width: 6px; height: 6px;"></span>
+                            <span id="decoder-status-txt" style="margin-left: 4px;">NO SIGNAL</span>
+                        </span>
+                    `;
+                }
+
+                // 2. Parse recent packets and print in console
+                if (data.packets && data.packets.length > 0) {
+                    const consoleBox = document.getElementById('decoder-console-box');
+                    
+                    let newPackets = [];
+                    for (let i = 0; i < data.packets.length; ++i) {
+                        const p = data.packets[i];
+                        if (p.timestamp > lastTimestamp) {
+                            newPackets.push(p);
+                        }
+                    }
+                    
+                    if (newPackets.length > 0) {
+                        newPackets.sort((a, b) => a.timestamp - b.timestamp);
+                        
+                        if (lastTimestamp === 0) {
+                            consoleBox.innerHTML = '';
+                        }
+                        
+                        newPackets.forEach(p => {
+                            lastTimestamp = p.timestamp;
+                            
+                            const secondsTotal = Math.floor(p.timestamp / 1000000);
+                            const minutes = Math.floor(secondsTotal / 60) % 60;
+                            const seconds = secondsTotal % 60;
+                            const timeStr = `[${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}]`;
+
+                            const line = document.createElement('div');
+                            line.className = 'console-line';
+                            line.innerHTML = `
+                                <span class="console-time">${timeStr}</span>
+                                <span class="console-hex" style="color: ${p.valid ? '#10b981' : '#ef4444'}; font-size: 10px;">${p.hex}</span>
+                                <span style="flex-grow: 1;">${p.text}</span>
+                            `;
+                            consoleBox.appendChild(line);
+                            
+                            if (p.valid) {
+                                parsePacketForHUD(p.text);
+                            }
+                        });
+                        
+                        while (consoleBox.children.length > 50) {
+                            consoleBox.removeChild(consoleBox.firstChild);
+                        }
+                        
+                        consoleBox.scrollTop = consoleBox.scrollHeight;
+                    }
+                }
+            })
+            .catch(err => {
+                console.warn('Decoder poll error:', err.message);
+            });
+        }
+
+        function parsePacketForHUD(text) {
+            if (text.includes("Loco ")) {
+                const parts = text.split(" | ");
+                const locoAddr = parts[0].replace("Loco ", "");
+                document.getElementById('hud-addr').innerText = locoAddr;
+                activeLocoState.addr = locoAddr;
+
+                if (parts[1] && parts[1].includes("Speed")) {
+                    let speedVal = "--";
+                    let dirVal = "--";
+                    
+                    if (parts[1].includes("FWD")) dirVal = "▶️ Forward";
+                    if (parts[1].includes("REV")) dirVal = "◀️ Reverse";
+                    
+                    const speedMatch = parts[1].match(/Speed \d+-step:\s*([A-Za-z0-9\/\s-]+)/);
+                    if (speedMatch) {
+                        speedVal = speedMatch[1].replace(" FWD", "").replace(" REV", "").trim();
+                    }
+                    
+                    document.getElementById('hud-speed').innerText = speedVal;
+                    document.getElementById('hud-dir').innerText = dirVal;
+                    
+                    activeLocoState.speed = speedVal;
+                    activeLocoState.dir = dirVal;
+                } else if (parts[1] && parts[1].includes("Func")) {
+                    const funcString = parts[1].replace("Func ", "");
+                    document.getElementById('hud-funcs').innerText = funcString;
+                }
+            } else if (text.includes("Turnout Addr: ")) {
+                const turnoutText = text.replace("Turnout Addr: ", "");
+                document.getElementById('hud-addr').innerText = "Acc Switch";
+                document.getElementById('hud-speed').innerText = turnoutText.split(" | ")[1] || "--";
+                document.getElementById('hud-dir').innerText = turnoutText.split(" | ")[0] || "--";
+            }
+        }
+
         // Query current connection mode on boot
         window.addEventListener('DOMContentLoaded', () => {
             fetch('/api/loco') // Just a get request to query current state if needed
@@ -1112,9 +1306,12 @@ const char INDEX_HTML[] = R"rawhtml(
                 }
             })
             .catch(err => {
-                // Fail silently since it might be local file mock
                 console.warn('Initial state fetch error (normal for local testing):', err.message);
             });
+
+            // Start decoder polling loop
+            pollDecoder();
+            setInterval(pollDecoder, 500);
         });
     </script>
 

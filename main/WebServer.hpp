@@ -16,6 +16,7 @@
 #include <esp_http_server.h>
 #include "DccRmtTransmitter.hpp"
 #include "WifiManager.hpp"
+#include "DccDecoder.hpp"
 
 namespace dcc {
 namespace web {
@@ -26,8 +27,9 @@ public:
      * @brief Construct a WebServer instance.
      * @param transmitter Pointer to the initialized DccRmtTransmitter.
      * @param wifi_manager Pointer to the initialized WifiManager.
+     * @param decoder Pointer to the initialized DccDecoder (optional).
      */
-    WebServer(dcc::rmt::DccRmtTransmitter* transmitter, dcc::wifi::WifiManager* wifi_manager);
+    WebServer(dcc::rmt::DccRmtTransmitter* transmitter, dcc::wifi::WifiManager* wifi_manager, dcc::rx::DccDecoder* decoder = nullptr);
     
     /**
      * @brief Destroy the WebServer instance (stops server if running).
@@ -57,9 +59,11 @@ private:
     static esp_err_t locoGetPostHandler(httpd_req_t* req);
     static esp_err_t accessoryPostHandler(httpd_req_t* req);
     static esp_err_t testPostHandler(httpd_req_t* req);
+    static esp_err_t decoderGetHandler(httpd_req_t* req);
 
     dcc::rmt::DccRmtTransmitter* m_transmitter;
     dcc::wifi::WifiManager* m_wifi_manager;
+    dcc::rx::DccDecoder* m_decoder;
     httpd_handle_t m_server_handle;
 };
 
