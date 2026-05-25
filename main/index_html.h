@@ -19,35 +19,30 @@ const char INDEX_HTML[] = R"rawhtml(
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ESP32 DCC RMT Command Center</title>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-primary: #0b0c15;
-            --bg-secondary: #131525;
-            --glass-bg: rgba(25, 27, 44, 0.55);
-            --glass-border: rgba(255, 255, 255, 0.08);
-            --accent-glow: #6366f1;
-            --accent-success: #10b981;
-            --accent-warning: #f59e0b;
-            --accent-danger: #ef4444;
-            --text-primary: #f8fafc;
-            --text-secondary: #94a3b8;
+            --bg-primary: #0a0b10;
+            --bg-secondary: #12131a;
+            --panel-bg: #161822;
+            --panel-border: #242736;
+            --accent-glow: #5850ec;
+            --accent-success: #057a55;
+            --accent-warning: #b45309;
+            --accent-danger: #9b1c1c;
+            --text-primary: #f9fafb;
+            --text-secondary: #9ca3af;
         }
 
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            font-family: 'Outfit', sans-serif;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             -webkit-tap-highlight-color: transparent;
         }
 
         body {
             background-color: var(--bg-primary);
-            background-image: 
-                radial-gradient(at 10% 20%, rgba(99, 102, 241, 0.15) 0px, transparent 50%),
-                radial-gradient(at 90% 80%, rgba(16, 185, 129, 0.1) 0px, transparent 50%);
-            background-attachment: fixed;
             color: var(--text-primary);
             min-height: 100vh;
             display: flex;
@@ -63,11 +58,9 @@ const char INDEX_HTML[] = R"rawhtml(
             justify-content: space-between;
             align-items: center;
             padding: 15px 25px;
-            background: var(--glass-bg);
-            backdrop-filter: blur(16px);
-            border: 1px solid var(--glass-border);
-            border-radius: 18px;
-            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 12px;
         }
 
         .logo-area {
@@ -79,23 +72,20 @@ const char INDEX_HTML[] = R"rawhtml(
         .logo-icon {
             width: 32px;
             height: 32px;
-            background: linear-gradient(135deg, var(--accent-glow), var(--accent-success));
-            border-radius: 8px;
+            background: #242736;
+            border-radius: 6px;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 700;
             font-size: 18px;
-            box-shadow: 0 0 15px rgba(99, 102, 241, 0.4);
         }
 
         .logo-text h1 {
             font-size: 20px;
             font-weight: 700;
             letter-spacing: 0.5px;
-            background: linear-gradient(135deg, #fff, #a5b4fc);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+            color: var(--text-primary);
         }
 
         .logo-text p {
@@ -108,20 +98,18 @@ const char INDEX_HTML[] = R"rawhtml(
             align-items: center;
             gap: 8px;
             padding: 6px 14px;
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 20px;
+            background: #12131a;
+            border-radius: 12px;
             font-size: 13px;
             font-weight: 600;
-            border: 1px solid rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--panel-border);
         }
 
         .status-dot {
             width: 8px;
             height: 8px;
-            background-color: var(--accent-success);
+            background-color: #10b981;
             border-radius: 50%;
-            box-shadow: 0 0 8px var(--accent-success);
-            animation: pulse 2s infinite;
         }
 
         .main-container {
@@ -141,12 +129,10 @@ const char INDEX_HTML[] = R"rawhtml(
         }
 
         .panel {
-            background: var(--glass-bg);
-            backdrop-filter: blur(16px);
-            border: 1px solid var(--glass-border);
-            border-radius: 24px;
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 12px;
             padding: 25px;
-            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
             display: flex;
             flex-direction: column;
             gap: 20px;
@@ -158,7 +144,7 @@ const char INDEX_HTML[] = R"rawhtml(
             display: flex;
             justify-content: space-between;
             align-items: center;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            border-bottom: 1px solid var(--panel-border);
             padding-bottom: 12px;
         }
 
@@ -190,23 +176,20 @@ const char INDEX_HTML[] = R"rawhtml(
         }
 
         .input-group input, .input-group select {
-            background: rgba(0, 0, 0, 0.25);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 12px;
+            background: #12131a;
+            border: 1px solid var(--panel-border);
+            border-radius: 8px;
             padding: 12px;
             color: var(--text-primary);
             font-size: 16px;
             font-weight: 600;
             outline: none;
-            transition: all 0.3s;
         }
 
         .input-group input:focus {
             border-color: var(--accent-glow);
-            box-shadow: 0 0 10px rgba(99, 102, 241, 0.25);
         }
 
-        /* Throttle UI styling */
         .throttle-container {
             display: flex;
             flex-direction: column;
@@ -218,30 +201,17 @@ const char INDEX_HTML[] = R"rawhtml(
         .speed-gauge {
             width: 140px;
             height: 140px;
-            border-radius: 50%;
-            background: radial-gradient(circle, rgba(19, 21, 37, 0.8) 0%, rgba(10, 12, 21, 0.9) 100%);
-            border: 4px solid rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            background: #12131a;
+            border: 2px solid var(--panel-border);
             display: flex;
             flex-direction: column;
             justify-content: center;
             align-items: center;
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5), inset 0 2px 10px rgba(255, 255, 255, 0.05);
-            position: relative;
-        }
-
-        .speed-gauge::after {
-            content: '';
-            position: absolute;
-            top: -4px; left: -4px; right: -4px; bottom: -4px;
-            border-radius: 50%;
-            border: 4px solid transparent;
-            border-top-color: var(--accent-glow);
-            transform: rotate(calc(var(--speed-percent, 0) * 2.7deg - 135deg));
-            transition: transform 0.1s linear;
         }
 
         .speed-value {
-            font-size: 38px;
+            font-size: 42px;
             font-weight: 700;
             color: var(--text-primary);
             line-height: 1;
@@ -272,27 +242,20 @@ const char INDEX_HTML[] = R"rawhtml(
         .slider-wrapper input[type="range"] {
             -webkit-appearance: none;
             width: 100%;
-            height: 10px;
-            border-radius: 5px;
-            background: rgba(0, 0, 0, 0.35);
+            height: 8px;
+            border-radius: 4px;
+            background: #12131a;
             outline: none;
-            transition: background 0.3s;
         }
 
         .slider-wrapper input[type="range"]::-webkit-slider-thumb {
             -webkit-appearance: none;
             appearance: none;
-            width: 24px;
-            height: 24px;
+            width: 20px;
+            height: 20px;
             border-radius: 50%;
-            background: linear-gradient(135deg, var(--accent-glow), #4f46e5);
+            background: var(--accent-glow);
             cursor: pointer;
-            box-shadow: 0 0 12px rgba(99, 102, 241, 0.6);
-            transition: transform 0.1s;
-        }
-
-        .slider-wrapper input[type="range"]::-webkit-slider-thumb:active {
-            transform: scale(1.2);
         }
 
         .dir-button-grid {
@@ -303,15 +266,14 @@ const char INDEX_HTML[] = R"rawhtml(
         }
 
         .btn {
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            border-radius: 14px;
+            background: #12131a;
+            border: 1px solid var(--panel-border);
+            border-radius: 8px;
             padding: 14px;
             color: var(--text-primary);
             font-size: 15px;
             font-weight: 700;
             cursor: pointer;
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -320,26 +282,19 @@ const char INDEX_HTML[] = R"rawhtml(
         }
 
         .btn:hover {
-            background: rgba(255, 255, 255, 0.1);
-            transform: translateY(-2px);
-        }
-
-        .btn:active {
-            transform: translateY(1px);
+            background: #1e202f;
         }
 
         .btn.active-fwd {
-            background: linear-gradient(135deg, rgba(99, 102, 241, 0.25), rgba(99, 102, 241, 0.1));
+            background: var(--accent-glow);
             border-color: var(--accent-glow);
-            color: #c7d2fe;
-            box-shadow: 0 0 15px rgba(99, 102, 241, 0.25);
+            color: white;
         }
 
         .btn.active-rev {
-            background: linear-gradient(135deg, rgba(245, 158, 11, 0.25), rgba(245, 158, 11, 0.1));
+            background: var(--accent-warning);
             border-color: var(--accent-warning);
-            color: #fef3c7;
-            box-shadow: 0 0 15px rgba(245, 158, 11, 0.25);
+            color: white;
         }
 
         .btn-stop {
@@ -348,16 +303,12 @@ const char INDEX_HTML[] = R"rawhtml(
             color: white;
             font-size: 16px;
             font-weight: 700;
-            box-shadow: 0 6px 20px rgba(239, 68, 68, 0.4);
-            animation: pulse-danger-idle 2s infinite;
         }
 
         .btn-stop:hover {
-            background: #f87171;
-            box-shadow: 0 6px 24px rgba(239, 68, 68, 0.6);
+            background: #b91c1c;
         }
 
-        /* Tactile Function grid */
         .func-grid {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
@@ -365,22 +316,20 @@ const char INDEX_HTML[] = R"rawhtml(
         }
 
         .btn-func {
-            background: rgba(0, 0, 0, 0.2);
-            border: 1px solid rgba(255, 255, 255, 0.05);
+            background: #12131a;
+            border: 1px solid var(--panel-border);
             font-size: 13px;
             font-weight: 600;
             padding: 10px;
-            border-radius: 10px;
+            border-radius: 6px;
         }
 
         .btn-func.active {
-            background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(16, 185, 129, 0.05));
+            background: var(--accent-success);
             border-color: var(--accent-success);
-            color: #d1fae5;
-            box-shadow: 0 0 10px rgba(16, 185, 129, 0.15);
+            color: white;
         }
 
-        /* Accessory styles */
         .accessory-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -388,9 +337,9 @@ const char INDEX_HTML[] = R"rawhtml(
         }
 
         .acc-panel {
-            background: rgba(0, 0, 0, 0.15);
-            border: 1px solid rgba(255, 255, 255, 0.04);
-            border-radius: 16px;
+            background: #12131a;
+            border: 1px solid var(--panel-border);
+            border-radius: 8px;
             padding: 15px;
             display: flex;
             flex-direction: column;
@@ -414,22 +363,21 @@ const char INDEX_HTML[] = R"rawhtml(
         .btn-acc {
             font-size: 12px;
             padding: 8px;
-            border-radius: 8px;
+            border-radius: 6px;
         }
 
         .btn-acc.active-str {
-            background: linear-gradient(135deg, rgba(16, 185, 129, 0.25), rgba(16, 185, 129, 0.1));
+            background: var(--accent-success);
             border-color: var(--accent-success);
-            color: #a7f3d0;
+            color: white;
         }
 
         .btn-acc.active-div {
-            background: linear-gradient(135deg, rgba(245, 158, 11, 0.25), rgba(245, 158, 11, 0.1));
+            background: var(--accent-warning);
             border-color: var(--accent-warning);
-            color: #fde68a;
+            color: white;
         }
 
-        /* Realtime console */
         .console-container {
             flex-grow: 1;
             display: flex;
@@ -438,11 +386,11 @@ const char INDEX_HTML[] = R"rawhtml(
         }
 
         .console-box {
-            background: rgba(0, 0, 0, 0.4);
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            border-radius: 16px;
+            background: #0a0b10;
+            border: 1px solid var(--panel-border);
+            border-radius: 8px;
             padding: 15px;
-            font-family: 'JetBrains Mono', monospace;
+            font-family: ui-monospace, SFMono-Regular, Consolas, Monaco, monospace;
             font-size: 12px;
             height: 130px;
             overflow-y: auto;
@@ -450,7 +398,6 @@ const char INDEX_HTML[] = R"rawhtml(
             display: flex;
             flex-direction: column;
             gap: 4px;
-            box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.8);
         }
 
         .console-line {
@@ -463,23 +410,20 @@ const char INDEX_HTML[] = R"rawhtml(
         }
 
         .console-hex {
-            color: var(--accent-success);
+            color: #10b981;
             font-weight: 700;
         }
 
-        /* Wi-Fi Provisioning modal styles */
         .modal-overlay {
             position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(5, 6, 11, 0.8);
-            backdrop-filter: blur(8px);
+            background: rgba(5, 6, 11, 0.95);
             display: flex;
             align-items: center;
             justify-content: center;
             z-index: 1000;
             opacity: 0;
             pointer-events: none;
-            transition: opacity 0.3s;
             padding: 20px;
         }
 
@@ -489,22 +433,15 @@ const char INDEX_HTML[] = R"rawhtml(
         }
 
         .modal-content {
-            background: var(--bg-secondary);
-            border: 1px solid var(--glass-border);
-            border-radius: 24px;
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 12px;
             width: 100%;
             max-width: 480px;
             padding: 25px;
-            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
             display: flex;
             flex-direction: column;
             gap: 15px;
-            transform: scale(0.9);
-            transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-        }
-
-        .modal-overlay.active .modal-content {
-            transform: scale(1);
         }
 
         .modal-header {
@@ -513,7 +450,7 @@ const char INDEX_HTML[] = R"rawhtml(
             display: flex;
             justify-content: space-between;
             align-items: center;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            border-bottom: 1px solid var(--panel-border);
             padding-bottom: 12px;
         }
 
@@ -528,9 +465,9 @@ const char INDEX_HTML[] = R"rawhtml(
         .network-list {
             max-height: 150px;
             overflow-y: auto;
-            background: rgba(0, 0, 0, 0.25);
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            border-radius: 12px;
+            background: #12131a;
+            border: 1px solid var(--panel-border);
+            border-radius: 8px;
             display: flex;
             flex-direction: column;
         }
@@ -541,18 +478,17 @@ const char INDEX_HTML[] = R"rawhtml(
             justify-content: space-between;
             align-items: center;
             cursor: pointer;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+            border-bottom: 1px solid var(--panel-border);
             font-size: 14px;
             font-weight: 600;
-            transition: background 0.2s;
         }
 
         .network-item:hover {
-            background: rgba(255, 255, 255, 0.03);
+            background: #1e202f;
         }
 
         .network-item.selected {
-            background: rgba(99, 102, 241, 0.15);
+            background: rgba(88, 80, 236, 0.2);
             color: #a5b4fc;
             border-left: 3px solid var(--accent-glow);
         }
@@ -590,21 +526,51 @@ const char INDEX_HTML[] = R"rawhtml(
             color: var(--accent-warning);
         }
 
-        /* Animations */
-        @keyframes pulse {
-            0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5); }
-            70% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
-        }
-
-        @keyframes pulse-danger-idle {
-            0% { box-shadow: 0 4px 15px rgba(239, 68, 68, 0.4); }
-            50% { box-shadow: 0 4px 22px rgba(239, 68, 68, 0.7); }
-            100% { box-shadow: 0 4px 15px rgba(239, 68, 68, 0.4); }
-        }
-
         @keyframes spin {
             to { transform: rotate(360deg); }
+        }
+
+        /* Switch/Toggle Slider */
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 24px;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .switch-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #242736;
+            border-radius: 34px;
+            transition: .2s;
+        }
+
+        .switch-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            border-radius: 50%;
+            transition: .2s;
+        }
+
+        input:checked + .switch-slider {
+            background-color: var(--accent-glow);
+        }
+
+        input:checked + .switch-slider:before {
+            transform: translateX(20px);
         }
     </style>
 </head>
@@ -733,16 +699,32 @@ const char INDEX_HTML[] = R"rawhtml(
 
             <!-- Diagnostics & Test Scenarios -->
             <div style="margin-top: 15px; margin-bottom: 15px;">
-                <div class="panel-title" style="margin-bottom: 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); padding-bottom: 5px; font-size: 14px;">
+                <div class="panel-title" style="margin-bottom: 10px; border-bottom: 1px solid var(--panel-border); padding-bottom: 5px; font-size: 14px;">
                     Diagnostics & Test Scenarios
                     <span>Select an autonomous routine to probe the track on your scope</span>
                 </div>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-                    <button class="btn btn-func" style="font-size: 11px; padding: 6px 4px; background: rgba(59, 130, 246, 0.1); border-color: rgba(59, 130, 246, 0.25);" onclick="triggerTest(1)">🔍 Idle Packets (5s)</button>
-                    <button class="btn btn-func" style="font-size: 11px; padding: 6px 4px; background: rgba(59, 130, 246, 0.1); border-color: rgba(59, 130, 246, 0.25);" onclick="triggerTest(2)">⚡ Speed Sweep (5s)</button>
-                    <button class="btn btn-func" style="font-size: 11px; padding: 6px 4px; background: rgba(59, 130, 246, 0.1); border-color: rgba(59, 130, 246, 0.25);" onclick="triggerTest(3)">🎛️ Turnout Toggles (3s)</button>
-                    <button class="btn btn-func" style="font-size: 11px; padding: 6px 4px; background: rgba(59, 130, 246, 0.1); border-color: rgba(59, 130, 246, 0.25);" onclick="triggerTest(4)">📡 BiDi Cutout (5s)</button>
+                    <button class="btn btn-func" style="font-size: 11px; padding: 6px 4px; background: #12131a; border-color: var(--panel-border);" onclick="triggerTest(1)">🔍 Idle Packets (5s)</button>
+                    <button class="btn btn-func" style="font-size: 11px; padding: 6px 4px; background: #12131a; border-color: var(--panel-border);" onclick="triggerTest(2)">⚡ Speed Sweep (5s)</button>
+                    <button class="btn btn-func" style="font-size: 11px; padding: 6px 4px; background: #12131a; border-color: var(--panel-border);" onclick="triggerTest(3)">🎛️ Turnout Toggles (3s)</button>
+                    <button class="btn btn-func" style="font-size: 11px; padding: 6px 4px; background: #12131a; border-color: var(--panel-border);" onclick="triggerTest(4)">📡 BiDi Cutout (5s)</button>
                 </div>
+            </div>
+
+            <!-- Scope Trigger Configuration -->
+            <div style="margin-top: 15px; margin-bottom: 15px;">
+                <div class="panel-title" style="margin-bottom: 10px; border-bottom: 1px solid var(--panel-border); padding-bottom: 5px; font-size: 14px;">
+                    GPIO4 Scope Trigger
+                    <span>Configure digital pulse trigger for oscilloscope capturing</span>
+                </div>
+                <div style="display: flex; align-items: center; justify-content: space-between; background: #12131a; border: 1px solid var(--panel-border); border-radius: 8px; padding: 10px; margin-bottom: 8px;">
+                    <span style="font-size: 12px; color: var(--text-secondary);">Enable GPIO4 Trigger:</span>
+                    <label class="switch">
+                        <input type="checkbox" id="scope-trigger-chk" checked onchange="toggleScopeTrigger(this.checked)">
+                        <span class="switch-slider"></span>
+                    </label>
+                </div>
+                <button class="btn btn-func" style="width: 100%; font-size: 11px; padding: 8px; background: var(--accent-success); border-color: var(--accent-success); color: white;" onclick="triggerTest(5)">🎯 Pulse Scope (Send DCC Command)</button>
             </div>
 
             <!-- Outgoing telemetry logs -->
@@ -763,36 +745,57 @@ const char INDEX_HTML[] = R"rawhtml(
         <!-- Third Panel: DCC Decoder Monitor -->
         <div class="panel" style="display: flex; flex-direction: column; justify-content: space-between;">
             <div>
-                <div class="panel-title" style="margin-bottom: 15px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); padding-bottom: 5px; font-size: 14px;">
+                <div class="panel-title" style="margin-bottom: 15px; border-bottom: 1px solid var(--panel-border); padding-bottom: 5px; font-size: 14px;">
                     DCC Decoder Monitor
                     <span id="decoder-badge-container">
-                        <span class="status-badge" style="background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.25); color: #ef4444; font-size: 10px; padding: 2px 6px;">
-                            <span class="status-dot" style="background-color: #ef4444; box-shadow: 0 0 8px #ef4444; width: 6px; height: 6px;"></span>
+                        <span class="status-badge" style="background: #12131a; border-color: var(--panel-border); color: #ef4444; font-size: 10px; padding: 2px 6px;">
+                            <span class="status-dot" style="background-color: #ef4444; width: 6px; height: 6px;"></span>
                             <span id="decoder-status-txt" style="margin-left: 4px;">NO SIGNAL</span>
                         </span>
                     </span>
                 </div>
 
+                <!-- Hardware Decoder Enable Switch -->
+                <div style="display: flex; align-items: center; justify-content: space-between; background: #12131a; border: 1px solid var(--panel-border); border-radius: 8px; padding: 10px; margin-bottom: 15px;">
+                    <span style="font-size: 12px; color: var(--text-secondary);">Enable Hardware RMT RX:</span>
+                    <label class="switch">
+                        <input type="checkbox" id="decoder-hardware-chk" onchange="toggleHardwareDecoder(this.checked)">
+                        <span class="switch-slider"></span>
+                    </label>
+                </div>
+
                 <!-- Decoder Pin and Stats Grid -->
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
-                    <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 12px; padding: 10px; text-align: center;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+                    <div style="background: #12131a; border: 1px solid var(--panel-border); border-radius: 8px; padding: 10px; text-align: center;">
                         <div style="font-size: 10px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Decoder Pin</div>
-                        <div id="decoder-pin-val" style="font-size: 16px; font-weight: 700; color: var(--accent-blue); margin-top: 4px;">--</div>
+                        <div id="decoder-pin-val" style="font-size: 16px; font-weight: 700; color: var(--accent-glow); margin-top: 4px;">--</div>
                     </div>
-                    <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 12px; padding: 10px; text-align: center;">
+                    <div style="background: #12131a; border: 1px solid var(--panel-border); border-radius: 8px; padding: 10px; text-align: center;">
                         <div style="font-size: 10px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">CRC Errors</div>
-                        <div id="decoder-errors-val" style="font-size: 16px; font-weight: 700; color: #ef4444; margin-top: 4px;">0</div>
+                        <div id="decoder-errors-val" style="font-size: 16px; font-weight: 700; color: var(--accent-danger); margin-top: 4px;">0</div>
                     </div>
                 </div>
 
-                <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 12px; padding: 10px; text-align: center; margin-bottom: 15px;">
+                <!-- Processor Load and Idle Packets Grid -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
+                    <div style="background: #12131a; border: 1px solid var(--panel-border); border-radius: 8px; padding: 10px; text-align: center;">
+                        <div style="font-size: 10px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">CPU0 / CPU1 Load</div>
+                        <div id="cpu-load-val" style="font-size: 16px; font-weight: 700; color: #3b82f6; margin-top: 4px;">0% / 0%</div>
+                    </div>
+                    <div style="background: #12131a; border: 1px solid var(--panel-border); border-radius: 8px; padding: 10px; text-align: center;">
+                        <div style="font-size: 10px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Idle Packets</div>
+                        <div id="decoder-idle-val" style="font-size: 16px; font-weight: 700; color: #a855f7; margin-top: 4px;">0</div>
+                    </div>
+                </div>
+
+                <div style="background: #12131a; border: 1px solid var(--panel-border); border-radius: 8px; padding: 10px; text-align: center; margin-bottom: 15px;">
                     <div style="font-size: 10px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Total Decoded Packets</div>
                     <div id="decoder-success-val" style="font-size: 20px; font-weight: 700; color: var(--accent-success); margin-top: 4px;">0</div>
                 </div>
 
                 <!-- Decoded Locomotive HUD -->
-                <div style="background: rgba(59, 130, 246, 0.05); border: 1px solid rgba(59, 130, 246, 0.15); border-radius: 16px; padding: 15px; margin-bottom: 15px;">
-                    <div style="font-size: 11px; color: var(--accent-blue); font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; border-bottom: 1px solid rgba(59, 130, 246, 0.15); padding-bottom: 4px;">
+                <div style="background: #12131a; border: 1px solid var(--panel-border); border-radius: 8px; padding: 15px; margin-bottom: 15px;">
+                    <div style="font-size: 11px; color: var(--accent-glow); font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; border-bottom: 1px solid var(--panel-border); padding-bottom: 4px;">
                         Decoded Locomotive HUD
                     </div>
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
@@ -808,7 +811,7 @@ const char INDEX_HTML[] = R"rawhtml(
                         <span id="hud-dir" style="font-size: 15px; font-weight: 700; color: white;">--</span>
                     </div>
                     <div style="font-size: 13px; color: var(--text-secondary); margin-bottom: 4px;">Function Group Flags:</div>
-                    <div id="hud-funcs" style="font-size: 11px; font-family: monospace; color: var(--text-secondary); background: rgba(0,0,0,0.2); padding: 6px; border-radius: 6px; text-align: center; letter-spacing: 1px;">
+                    <div id="hud-funcs" style="font-size: 11px; font-family: monospace; color: var(--text-secondary); background: #0a0b10; padding: 6px; border-radius: 6px; text-align: center; letter-spacing: 1px;">
                         F0..F8: --
                     </div>
                 </div>
@@ -867,7 +870,7 @@ const char INDEX_HTML[] = R"rawhtml(
                 <input type="password" id="wifi-pass" placeholder="••••••••">
             </div>
 
-            <button class="btn btn-stop" style="background: linear-gradient(135deg, var(--accent-success), #059669); box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3); animation: none;" onclick="applyWifiConfig()">💾 Save Credentials & Reboot</button>
+            <button class="btn btn-stop" style="background: var(--accent-success); border: none;" onclick="applyWifiConfig()">💾 Save Credentials & Reboot</button>
         </div>
     </div>
 
@@ -1034,6 +1037,26 @@ const char INDEX_HTML[] = R"rawhtml(
             });
         }
 
+        // Toggle GPIO4 Scope Trigger
+        function toggleScopeTrigger(checked) {
+            fetch('/api/trigger', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: checked })
+            })
+            .then(res => {
+                if (!res.ok) throw new Error('HTTP status ' + res.status);
+                return res.json();
+            })
+            .then(data => {
+                logTelemetry('TEST', `Scope Trigger on GPIO4 set to ${data.enabled ? 'ENABLED' : 'DISABLED'}`, []);
+            })
+            .catch(err => {
+                console.error('Error toggling scope trigger:', err);
+                logTelemetry('TEST', `Error toggling scope trigger: ${err.message}`, []);
+            });
+        }
+
         // Wi-Fi Setup Modal controllers
         function openWifiModal() {
             document.getElementById('wifi-modal').className = 'modal-overlay active';
@@ -1170,6 +1193,7 @@ const char INDEX_HTML[] = R"rawhtml(
 
         let lastTimestamp = 0;
         let activeLocoState = { addr: "None", speed: "--", dir: "--", funcs: {} };
+        let isTogglingDecoder = false;
 
         function pollDecoder() {
             fetch('/api/decoder')
@@ -1183,21 +1207,36 @@ const char INDEX_HTML[] = R"rawhtml(
                 const successVal = document.getElementById('decoder-success-val');
                 const errorsVal = document.getElementById('decoder-errors-val');
 
-                pinVal.innerText = `GPIO ${data.pin}`;
+                pinVal.innerText = data.pin === -1 ? "Software Loopback" : `GPIO ${data.pin}`;
                 successVal.innerText = data.success_count;
                 errorsVal.innerText = data.error_count;
 
+                // Update processor load and idle packet counter
+                const cpuVal = document.getElementById('cpu-load-val');
+                const idleVal = document.getElementById('decoder-idle-val');
+                if (cpuVal) {
+                    cpuVal.innerText = `${data.cpu_load_core0}% / ${data.cpu_load_core1}%`;
+                }
+                if (idleVal) {
+                    idleVal.innerText = data.idle_packet_count;
+                }
+
+                const chk = document.getElementById('decoder-hardware-chk');
+                if (chk && !isTogglingDecoder) {
+                    chk.checked = (data.pin !== -1);
+                }
+
                 if (data.status === "Active") {
                     badge.innerHTML = `
-                        <span class="status-badge" style="background: rgba(16, 185, 129, 0.1); border-color: rgba(16, 185, 129, 0.25); color: #10b981; font-size: 10px; padding: 2px 6px;">
-                            <span class="status-dot" style="background-color: #10b981; box-shadow: 0 0 8px #10b981; width: 6px; height: 6px;"></span>
+                        <span class="status-badge" style="background: #12131a; border-color: var(--panel-border); color: #10b981; font-size: 10px; padding: 2px 6px;">
+                            <span class="status-dot" style="background-color: #10b981; width: 6px; height: 6px;"></span>
                             <span id="decoder-status-txt" style="margin-left: 4px;">ACTIVE</span>
                         </span>
                     `;
                 } else {
                     badge.innerHTML = `
-                        <span class="status-badge" style="background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.25); color: #ef4444; font-size: 10px; padding: 2px 6px;">
-                            <span class="status-dot" style="background-color: #ef4444; box-shadow: 0 0 8px #ef4444; width: 6px; height: 6px;"></span>
+                        <span class="status-badge" style="background: #12131a; border-color: var(--panel-border); color: #ef4444; font-size: 10px; padding: 2px 6px;">
+                            <span class="status-dot" style="background-color: #ef4444; width: 6px; height: 6px;"></span>
                             <span id="decoder-status-txt" style="margin-left: 4px;">NO SIGNAL</span>
                         </span>
                     `;
@@ -1254,6 +1293,43 @@ const char INDEX_HTML[] = R"rawhtml(
             })
             .catch(err => {
                 console.warn('Decoder poll error:', err.message);
+            });
+        }
+
+        function toggleHardwareDecoder(enabled) {
+            isTogglingDecoder = true;
+            fetch('/api/decoder/toggle', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: enabled })
+            })
+            .then(res => res.json())
+            .then(data => {
+                const pinVal = document.getElementById('decoder-pin-val');
+                pinVal.innerText = data.pin === -1 ? "Software Loopback" : `GPIO ${data.pin}`;
+                document.getElementById('decoder-success-val').innerText = '0';
+                document.getElementById('decoder-errors-val').innerText = '0';
+                document.getElementById('decoder-console-box').innerHTML = `
+                    <div class="console-line">
+                        <span class="console-time">[00:00:00]</span>
+                        <span style="color: var(--accent-glow)">Decoder mode set to ${data.pin === -1 ? 'Software Loopback' : 'Hardware GPIO RX'}...</span>
+                    </div>
+                `;
+                lastTimestamp = 0;
+
+                const chk = document.getElementById('decoder-hardware-chk');
+                if (chk) {
+                    chk.checked = (data.pin !== -1);
+                }
+                isTogglingDecoder = false;
+            })
+            .catch(err => {
+                console.error('Error toggling hardware decoder:', err);
+                const chk = document.getElementById('decoder-hardware-chk');
+                if (chk) {
+                    chk.checked = !enabled;
+                }
+                isTogglingDecoder = false;
             });
         }
 

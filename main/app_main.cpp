@@ -34,15 +34,15 @@ static const char* TAG = "DccAppMain";
 #if CONFIG_IDF_TARGET_ESP32C3
   // ESP32-C3 default RMT and Decoder pins (avoids strapping-pin GPIO 9)
   #define DCC_GPIO_PIN      GPIO_NUM_8
-  #define DCC_DECODER_PIN   GPIO_NUM_10
+  #define DCC_DECODER_PIN   -1 // Default to Software Loopback Mode (No Interrupts)
 #elif CONFIG_IDF_TARGET_ESP32S3
-  // ESP32-S3 default RMT and Decoder pins
-  #define DCC_GPIO_PIN      GPIO_NUM_18
-  #define DCC_DECODER_PIN   GPIO_NUM_19
+  // ESP32-S3 default RMT and Decoder pins (using GPIO 5 for easy physical access and USB isolation)
+  #define DCC_GPIO_PIN      GPIO_NUM_5
+  #define DCC_DECODER_PIN   GPIO_NUM_6
 #else
   // Standard ESP32 default RMT and Decoder pins
   #define DCC_GPIO_PIN      GPIO_NUM_21
-  #define DCC_DECODER_PIN   GPIO_NUM_22
+  #define DCC_DECODER_PIN   -1 // Default to Software Loopback Mode (No Interrupts)
 #endif
 
 // =============================================================================
@@ -130,53 +130,72 @@ void print_oscilloscope_safety_warning() {
     ESP_LOGW(TAG, "===============================================================\n");
 }
 
-// =============================================================================
-// Application Entrypoint
-// =============================================================================
-extern "C" void app_main() {
-    // Initialize and optimize console output
-    configure_serial_logging();
-    
-    // Print oscilloscope setup instructions
-    print_oscilloscope_safety_warning();
 
-    // 1. Initialize Wi-Fi and Non-Volatile Storage (NVS)
-    ESP_LOGI(TAG, "Initializing Wi-Fi Manager...");
-    static dcc::wifi::WifiManager wifi_manager;
-    wifi_manager.init();
 
-    // 2. Create and configure our standalone DCC Decoder and Transmitter
-    ESP_LOGI(TAG, "Initializing DCC Decoder on pin %d...", DCC_DECODER_PIN);
-    static dcc::rx::DccDecoder decoder;
-    if (!decoder.init(DCC_DECODER_PIN)) {
-        ESP_LOGE(TAG, "Failed to initialize DCC Decoder! Continuing with transmitter only...");
+// =============================================================================
+// Software-Loopback callback for zero-interrupt DCC decoding
+// =============================================================================
+static void on_packet_transmitted(const uint8_t* payload, size_t length, void* arg) {
+    auto* dec = static_cast<dcc::rx::DccDecoder*>(arg);
+    // Standard DCC packet XOR checksum check
+    bool is_valid = true;
+    if (length >= 3) {
+        uint8_t checksum = 0;
+        for (size_t i = 0; i < length - 1; ++i) {
+            checksum ^= payload[i];
+        }
+        is_valid = (checksum == payload[length - 1]);
+    }
+    dec->injectPacket(payload, length, is_valid);
+}
+
+// =============================================================================
+// Static instances for DCC components
+// =============================================================================
+static dcc::rx::DccDecoder decoder;
+static dcc::rmt::DccRmtTransmitter transmitter;
+static dcc::wifi::WifiManager wifi_manager;
+static dcc::rmt::TransmitterConfig config;
+
+// =============================================================================
+// Core 1 Startup Task
+// =============================================================================
+static void startup_task(void* pvParameters) {
+    ESP_LOGI(TAG, "Startup Task: running RMT/GDMA initializations on Core 1...");
+
+    // 1. Initialize DCC Decoder in safe default Software Loopback Mode to prevent startup noise storms
+    ESP_LOGI(TAG, "Initializing DCC Decoder in safe default Software Loopback Mode...");
+    if (!decoder.init(-1)) {
+        ESP_LOGE(TAG, "Failed to initialize DCC Decoder in loopback mode.");
     }
 
+    // 2. Configure and Initialize DCC Transmitter (RMT TX)
     ESP_LOGI(TAG, "Initializing DCC RMT Transmitter...");
-    static dcc::rmt::DccRmtTransmitter transmitter;
-    dcc::rmt::TransmitterConfig config;
-    
     config.gpio_num = DCC_GPIO_PIN;
     config.num_preamble = 18;        // NMRA standard minimum is 14; 18 is highly reliable
     config.enable_bidi = false;      // Start with BiDi cutout disabled
     config.bidibit_duration = 60;    // 60 µs per BiDi cutout bit (4 bits total = 240 µs)
     config.bit1_duration = 58;       // 58 µs high / 58 µs low
     config.bit0_duration = 100;      // 100 µs high / 100 µs low
-    config.endbit_duration = 34;     // Workaround for timing issues (58 - 24)
+    config.endbit_duration = 58;     // Restore to nominal 58 µs under continuous generation (Option A)
     config.flags.level0 = false;     // Standard polarity (starts low)
     config.flags.zimo0 = true;       // Enable ZIMO 0 packet prefix behavior
 
-    // Initialize RMT driver and start background thread
     if (!transmitter.init(config)) {
         ESP_LOGE(TAG, "Failed to initialize DCC RMT Transmitter. Aborting.");
+        vTaskDelete(NULL);
         return;
     }
 
+    // Register high-reliability software loopback callback unconditionally for boot Software Loopback Mode
+    transmitter.registerCallback(on_packet_transmitted, &decoder);
+
     // 3. Initialize and start Embedded Web Server
     ESP_LOGI(TAG, "Initializing Embedded Web Server...");
-    static dcc::web::WebServer web_server(&transmitter, &wifi_manager, &decoder);
+    static dcc::web::WebServer web_server(&transmitter, &wifi_manager, &decoder, DCC_DECODER_PIN);
     if (!web_server.start()) {
         ESP_LOGE(TAG, "Failed to start Web Server. Aborting.");
+        vTaskDelete(NULL);
         return;
     }
 
@@ -195,7 +214,37 @@ extern "C" void app_main() {
     ESP_LOGI(TAG, "  URL:    http://%s/", wifi_manager.getIpAddress().c_str());
     ESP_LOGI(TAG, "===============================================================");
 
-    // Heartbeat loop
+    vTaskDelete(NULL);
+}
+
+// =============================================================================
+// Application Entrypoint
+// =============================================================================
+extern "C" void app_main() {
+    // Initialize and optimize console output
+    configure_serial_logging();
+    
+    // Print oscilloscope setup instructions
+    print_oscilloscope_safety_warning();
+
+    // 1. Initialize Wi-Fi and Non-Volatile Storage (NVS)
+    ESP_LOGI(TAG, "Initializing Wi-Fi Manager...");
+    wifi_manager.init();
+
+    // 2. Spawn the Core 1 Startup Task to perform RMT and GDMA driver setup
+    // This moves RMT/GDMA interrupts off Core 0 (where Wi-Fi resides) to Core 1,
+    // completely avoiding Core 0 interrupt input exhaustion!
+    xTaskCreatePinnedToCore(
+        startup_task,
+        "startup_task",
+        4096,
+        NULL,
+        configMAX_PRIORITIES - 2,
+        NULL,
+        1 // Pin to Core 1!
+    );
+
+    // Heartbeat loop (remains running on Core 0)
     while (true) {
         ESP_LOGI(TAG, "System Heartbeat | IP: %s | Mode: %s", 
                  wifi_manager.getIpAddress().c_str(),

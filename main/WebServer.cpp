@@ -17,6 +17,7 @@
 #include <atomic>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include "esp_freertos_hooks.h"
 
 static const char* TAG = "WebServer";
 
@@ -41,11 +42,73 @@ static std::string read_post_body(httpd_req_t* req) {
     return body;
 }
 
-WebServer::WebServer(dcc::rmt::DccRmtTransmitter* transmitter, dcc::wifi::WifiManager* wifi_manager, dcc::rx::DccDecoder* decoder)
+WebServer::WebServer(dcc::rmt::DccRmtTransmitter* transmitter, dcc::wifi::WifiManager* wifi_manager, dcc::rx::DccDecoder* decoder, int decoder_pin)
     : m_transmitter(transmitter),
       m_wifi_manager(wifi_manager),
       m_decoder(decoder),
-      m_server_handle(nullptr) {
+      m_server_handle(nullptr),
+      m_decoder_pin(decoder_pin) {
+    m_last_loco_address = -1;
+    m_last_loco_speed = -1;
+    m_last_loco_direction = false;
+    std::memset(m_last_f_states, 0, sizeof(m_last_f_states));
+}
+
+static volatile uint64_t s_idle_count_core0 = 0;
+static volatile uint64_t s_idle_count_core1 = 0;
+
+static bool IRAM_ATTR idle_hook_core0(void) {
+    s_idle_count_core0 = s_idle_count_core0 + 1;
+    return true;
+}
+
+static bool IRAM_ATTR idle_hook_core1(void) {
+    s_idle_count_core1 = s_idle_count_core1 + 1;
+    return true;
+}
+
+static float s_cpu_load_core0 = 0.0f;
+static float s_cpu_load_core1 = 0.0f;
+
+static void cpuMonitorTask(void* param) {
+    // Register the idle hooks for each CPU
+    esp_register_freertos_idle_hook_for_cpu(idle_hook_core0, 0);
+    esp_register_freertos_idle_hook_for_cpu(idle_hook_core1, 1);
+
+    uint64_t last_idle_core0 = 0;
+    uint64_t last_idle_core1 = 0;
+    uint64_t max_delta_core0 = 1; 
+    uint64_t max_delta_core1 = 1;
+
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(1000)); // Sample every 1 second
+
+        uint64_t curr_idle0 = s_idle_count_core0;
+        uint64_t curr_idle1 = s_idle_count_core1;
+
+        uint64_t delta0 = curr_idle0 - last_idle_core0;
+        uint64_t delta1 = curr_idle1 - last_idle_core1;
+
+        last_idle_core0 = curr_idle0;
+        last_idle_core1 = curr_idle1;
+
+        // Auto-calibrate: dynamically track the maximum idle count in any 1s window
+        if (delta0 > max_delta_core0) max_delta_core0 = delta0;
+        if (delta1 > max_delta_core1) max_delta_core1 = delta1;
+
+        // Calculate load percentage
+        float load0 = 100.0f - (static_cast<float>(delta0) * 100.0f / static_cast<float>(max_delta_core0));
+        float load1 = 100.0f - (static_cast<float>(delta1) * 100.0f / static_cast<float>(max_delta_core1));
+
+        // Clamp
+        if (load0 < 0.0f) load0 = 0.0f;
+        if (load0 > 100.0f) load0 = 100.0f;
+        if (load1 < 0.0f) load1 = 0.0f;
+        if (load1 > 100.0f) load1 = 100.0f;
+
+        s_cpu_load_core0 = load0;
+        s_cpu_load_core1 = load1;
+    }
 }
 
 WebServer::~WebServer() {
@@ -69,6 +132,9 @@ bool WebServer::start() {
         ESP_LOGE(TAG, "Failed to start HTTP server.");
         return false;
     }
+
+    // Start CPU load monitoring task on Core 0 (tracks both Core 0 & Core 1)
+    xTaskCreatePinnedToCore(cpuMonitorTask, "cpu_monitor", 2048, nullptr, 1, NULL, 0);
 
     // Register GET / (Serve Dashboard)
     httpd_uri_t index_uri = {
@@ -132,6 +198,24 @@ bool WebServer::start() {
         .user_ctx = this
     };
     httpd_register_uri_handler(m_server_handle, &decoder_uri);
+
+    // Register POST /api/decoder/toggle
+    httpd_uri_t decoder_toggle_uri = {
+        .uri      = "/api/decoder/toggle",
+        .method   = HTTP_POST,
+        .handler  = decoderTogglePostHandler,
+        .user_ctx = this
+    };
+    httpd_register_uri_handler(m_server_handle, &decoder_toggle_uri);
+
+    // Register POST /api/trigger
+    httpd_uri_t trigger_uri = {
+        .uri      = "/api/trigger",
+        .method   = HTTP_POST,
+        .handler  = triggerPostHandler,
+        .user_ctx = this
+    };
+    httpd_register_uri_handler(m_server_handle, &trigger_uri);
 
     ESP_LOGI(TAG, "Web server started successfully and endpoints registered.");
     return true;
@@ -280,7 +364,6 @@ esp_err_t WebServer::locoGetPostHandler(httpd_req_t* req) {
             pkt_speed[4] = pkt_speed[0] ^ pkt_speed[1] ^ pkt_speed[2] ^ pkt_speed[3];
             len_speed = 5;
         }
-        self->m_transmitter->sendPacket(pkt_speed, len_speed);
 
         // 2. Generate Function Group 1 Packet (F0, F4, F3, F2, F1)
         // Instruction byte: 0x80 | (F0<<4) | (F4<<3) | (F3<<2) | (F2<<1) | F1
@@ -304,7 +387,6 @@ esp_err_t WebServer::locoGetPostHandler(httpd_req_t* req) {
             pkt_f0_4[3] = pkt_f0_4[0] ^ pkt_f0_4[1] ^ pkt_f0_4[2];
             len_f0_4 = 4;
         }
-        self->m_transmitter->sendPacket(pkt_f0_4, len_f0_4);
 
         // 3. Generate Function Group 2 Packet (F8, F7, F6, F5)
         // Instruction byte: 0xB0 | (F8<<3) | (F7<<2) | (F6<<1) | F5
@@ -327,7 +409,51 @@ esp_err_t WebServer::locoGetPostHandler(httpd_req_t* req) {
             pkt_f5_8[3] = pkt_f5_8[0] ^ pkt_f5_8[1] ^ pkt_f5_8[2];
             len_f5_8 = 4;
         }
-        self->m_transmitter->sendPacket(pkt_f5_8, len_f5_8);
+
+        // Differential transmission (Strategy A): Only dispatch packet types whose target states have actually mutated
+        bool send_speed = (self->m_last_loco_address != address) || 
+                          (self->m_last_loco_speed != speed) || 
+                          (self->m_last_loco_direction != direction);
+        
+        bool send_f0_4 = (self->m_last_loco_address != address) || 
+                         (self->m_last_f_states[0] != f_states[0]) || 
+                         (self->m_last_f_states[1] != f_states[1]) || 
+                         (self->m_last_f_states[2] != f_states[2]) || 
+                         (self->m_last_f_states[3] != f_states[3]) || 
+                         (self->m_last_f_states[4] != f_states[4]);
+
+        bool send_f5_8 = (self->m_last_loco_address != address) || 
+                         (self->m_last_f_states[5] != f_states[5]) || 
+                         (self->m_last_f_states[6] != f_states[6]) || 
+                         (self->m_last_f_states[7] != f_states[7]) || 
+                         (self->m_last_f_states[8] != f_states[8]);
+
+        if (send_speed) {
+            self->m_transmitter->sendPacket(pkt_speed, len_speed);
+            self->m_last_loco_speed = speed;
+            self->m_last_loco_direction = direction;
+        }
+
+        if (send_f0_4) {
+            self->m_transmitter->sendPacket(pkt_f0_4, len_f0_4);
+            self->m_last_f_states[0] = f_states[0];
+            self->m_last_f_states[1] = f_states[1];
+            self->m_last_f_states[2] = f_states[2];
+            self->m_last_f_states[3] = f_states[3];
+            self->m_last_f_states[4] = f_states[4];
+        }
+
+        if (send_f5_8) {
+            self->m_transmitter->sendPacket(pkt_f5_8, len_f5_8);
+            self->m_last_f_states[5] = f_states[5];
+            self->m_last_f_states[6] = f_states[6];
+            self->m_last_f_states[7] = f_states[7];
+            self->m_last_f_states[8] = f_states[8];
+        }
+
+        if (send_speed || send_f0_4 || send_f5_8) {
+            self->m_last_loco_address = address;
+        }
 
         // Return primary Speed Packet bytes for frontend console telemetry logs
         cJSON* resp = cJSON_CreateObject();
@@ -501,6 +627,14 @@ static void test_scenario_task(void* pvParameters) {
             }
         }
     }
+    else if (scenario == 5) {
+        // Single DCC Command to trigger the scope
+        uint8_t raw_payload[4] = { 0x03, 0x3F, 0x1F, 0x00 }; // Address 3, Speed 30
+        raw_payload[3] = raw_payload[0] ^ raw_payload[1] ^ raw_payload[2];
+        transmitter->sendPacket(raw_payload, sizeof(raw_payload));
+        // Add a small delay so telemetry has time to register
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
 
     ESP_LOGI("DccTestRunner", "Autonomous test scenario %d completed successfully.", scenario);
     s_test_running = false;
@@ -528,8 +662,8 @@ esp_err_t WebServer::testPostHandler(httpd_req_t* req) {
     int scenario = sc_item->valueint;
     cJSON_Delete(json);
 
-    if (scenario < 1 || scenario > 4) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Scenario ID must be between 1 and 4");
+    if (scenario < 1 || scenario > 5) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Scenario ID must be between 1 and 5");
         return ESP_FAIL;
     }
 
@@ -543,13 +677,14 @@ esp_err_t WebServer::testPostHandler(httpd_req_t* req) {
     params->scenario_id = scenario;
     params->transmitter = self->m_transmitter;
 
-    BaseType_t task_ret = xTaskCreate(
+    BaseType_t task_ret = xTaskCreatePinnedToCore(
         test_scenario_task,
         "dcc_test_task",
         3072,
         params,
-        configMAX_PRIORITIES - 2, // Slightly lower than main DCC task to prevent interrupt blockages
-        NULL
+        10, // Priority 10 is safe and won't starve high-priority system tasks
+        NULL,
+        1 // Pinned to Core 1 (isolated from Core 0 Wi-Fi and Web Server)
     );
 
     if (task_ret != pdPASS) {
@@ -591,6 +726,9 @@ esp_err_t WebServer::decoderGetHandler(httpd_req_t* req) {
         cJSON_AddNumberToObject(root, "pin", -1);
         cJSON_AddNumberToObject(root, "success_count", 0);
         cJSON_AddNumberToObject(root, "error_count", 0);
+        cJSON_AddNumberToObject(root, "idle_packet_count", 0);
+        cJSON_AddNumberToObject(root, "cpu_load_core0", 0);
+        cJSON_AddNumberToObject(root, "cpu_load_core1", 0);
         cJSON_AddArrayToObject(root, "packets");
     } else {
         bool signal_active = self->m_decoder->isSignalActive();
@@ -599,6 +737,9 @@ esp_err_t WebServer::decoderGetHandler(httpd_req_t* req) {
         cJSON_AddNumberToObject(root, "pin", self->m_decoder->getGpioNum());
         cJSON_AddNumberToObject(root, "success_count", self->m_decoder->getSuccessCount());
         cJSON_AddNumberToObject(root, "error_count", self->m_decoder->getErrorCount());
+        cJSON_AddNumberToObject(root, "idle_packet_count", self->m_decoder->getIdlePacketCount());
+        cJSON_AddNumberToObject(root, "cpu_load_core0", static_cast<int>(s_cpu_load_core0));
+        cJSON_AddNumberToObject(root, "cpu_load_core1", static_cast<int>(s_cpu_load_core1));
 
         cJSON* packets_arr = cJSON_CreateArray();
         std::vector<dcc::rx::DecodedPacket> packets = self->m_decoder->getRecentPackets(10);
@@ -634,6 +775,107 @@ esp_err_t WebServer::decoderGetHandler(httpd_req_t* req) {
     esp_err_t res = httpd_resp_sendstr(req, json_str);
     free(json_str);
     return res;
+}
+
+static void web_on_packet_transmitted(const uint8_t* payload, size_t length, void* arg) {
+    auto* dec = static_cast<dcc::rx::DccDecoder*>(arg);
+    bool is_valid = true;
+    if (length >= 3) {
+        uint8_t checksum = 0;
+        for (size_t i = 0; i < length - 1; ++i) {
+            checksum ^= payload[i];
+        }
+        is_valid = (checksum == payload[length - 1]);
+    }
+    dec->injectPacket(payload, length, is_valid);
+}
+
+esp_err_t WebServer::decoderTogglePostHandler(httpd_req_t* req) {
+    auto* self = static_cast<WebServer*>(req->user_ctx);
+    std::string body = read_post_body(req);
+    
+    cJSON* json = cJSON_Parse(body.c_str());
+    if (!json) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+
+    cJSON* enabled_item = cJSON_GetObjectItem(json, "enabled");
+    if (!enabled_item) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'enabled' parameter");
+        return ESP_FAIL;
+    }
+
+    bool enabled = cJSON_IsTrue(enabled_item);
+    cJSON_Delete(json);
+
+    ESP_LOGI(TAG, "Setting Decoder hardware state to %s", enabled ? "ENABLED" : "DISABLED");
+    self->m_decoder->deinit();
+    bool init_ok = false;
+    if (enabled) {
+        self->m_transmitter->registerCallback(nullptr, nullptr); // Unregister software loopback
+        init_ok = self->m_decoder->init(self->m_decoder_pin);
+        if (!init_ok) {
+            ESP_LOGE(TAG, "Failed to initialize hardware DCC decoder on pin %d. Reverting to loopback.", self->m_decoder_pin);
+            // Revert to software loopback
+            self->m_decoder->init(-1);
+            self->m_transmitter->registerCallback(web_on_packet_transmitted, self->m_decoder);
+            enabled = false;
+        }
+    } else {
+        init_ok = self->m_decoder->init(-1);
+        self->m_transmitter->registerCallback(web_on_packet_transmitted, self->m_decoder); // Re-register software loopback
+    }
+
+    cJSON* resp = cJSON_CreateObject();
+    cJSON_AddStringToObject(resp, "status", "ok");
+    cJSON_AddBoolToObject(resp, "enabled", enabled);
+    cJSON_AddNumberToObject(resp, "pin", self->m_decoder->getGpioNum());
+    char* resp_str = cJSON_PrintUnformatted(resp);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, resp_str);
+    
+    cJSON_free(resp_str);
+    cJSON_Delete(resp);
+    return ESP_OK;
+}
+
+esp_err_t WebServer::triggerPostHandler(httpd_req_t* req) {
+    auto* self = static_cast<WebServer*>(req->user_ctx);
+    std::string body = read_post_body(req);
+    
+    cJSON* json = cJSON_Parse(body.c_str());
+    if (!json) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+
+    cJSON* enabled_item = cJSON_GetObjectItem(json, "enabled");
+    if (!enabled_item) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'enabled' parameter");
+        return ESP_FAIL;
+    }
+
+    bool enabled = cJSON_IsTrue(enabled_item);
+    cJSON_Delete(json);
+
+    self->m_transmitter->setScopeTriggerEnabled(enabled);
+    ESP_LOGI(TAG, "GPIO4 Scope Trigger set to %s", enabled ? "ENABLED" : "DISABLED");
+
+    cJSON* resp = cJSON_CreateObject();
+    cJSON_AddStringToObject(resp, "status", "ok");
+    cJSON_AddBoolToObject(resp, "enabled", enabled);
+    char* resp_str = cJSON_PrintUnformatted(resp);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, resp_str);
+    
+    cJSON_free(resp_str);
+    cJSON_Delete(resp);
+    return ESP_OK;
 }
 
 } // namespace web

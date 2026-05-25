@@ -28,8 +28,9 @@ public:
      * @param transmitter Pointer to the initialized DccRmtTransmitter.
      * @param wifi_manager Pointer to the initialized WifiManager.
      * @param decoder Pointer to the initialized DccDecoder (optional).
+     * @param decoder_pin The hardware input GPIO pin connected to the DCC signal.
      */
-    WebServer(dcc::rmt::DccRmtTransmitter* transmitter, dcc::wifi::WifiManager* wifi_manager, dcc::rx::DccDecoder* decoder = nullptr);
+    WebServer(dcc::rmt::DccRmtTransmitter* transmitter, dcc::wifi::WifiManager* wifi_manager, dcc::rx::DccDecoder* decoder = nullptr, int decoder_pin = -1);
     
     /**
      * @brief Destroy the WebServer instance (stops server if running).
@@ -60,11 +61,19 @@ private:
     static esp_err_t accessoryPostHandler(httpd_req_t* req);
     static esp_err_t testPostHandler(httpd_req_t* req);
     static esp_err_t decoderGetHandler(httpd_req_t* req);
+    static esp_err_t decoderTogglePostHandler(httpd_req_t* req);
+    static esp_err_t triggerPostHandler(httpd_req_t* req);
 
     dcc::rmt::DccRmtTransmitter* m_transmitter;
     dcc::wifi::WifiManager* m_wifi_manager;
     dcc::rx::DccDecoder* m_decoder;
     httpd_handle_t m_server_handle;
+    int m_decoder_pin;
+
+    int m_last_loco_address;
+    int m_last_loco_speed;
+    bool m_last_loco_direction;
+    bool m_last_f_states[9];
 };
 
 } // namespace web

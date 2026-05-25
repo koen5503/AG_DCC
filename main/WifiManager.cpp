@@ -213,6 +213,7 @@ bool WifiManager::tryConnectStation(const std::string& ssid, const std::string& 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE)); // Disable Wi-Fi power save to solve latency and packet loss
 
     ESP_LOGI(TAG, "Waiting for IP address (timeout: 10s)...");
     
@@ -284,6 +285,7 @@ void WifiManager::startAccessPoint() {
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE)); // Disable Wi-Fi power save to solve latency and packet loss
 
     ESP_LOGI(TAG, "SoftAP Started! SSID: %s | Pass: dcccontrol | IP: 192.168.4.1", ap_ssid);
 }

@@ -14,6 +14,7 @@
 #pragma once
 
 #include <driver/gpio.h>
+#include <driver/rmt_rx.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -36,6 +37,18 @@ struct DecodedPacket {
     bool is_valid;                  ///< True if checksum passed
     std::string human_readable;     ///< Translated human description of the packet command
 };
+
+
+/**
+ * @brief Queue message to pass RMT symbol buffers from ISR to background task.
+ */
+struct SymbolMsg {
+    const rmt_symbol_word_t* symbols;
+    uint32_t count;
+    bool is_last;
+};
+
+
 
 /**
  * @brief Hardware-timed DCC Decoder module.
@@ -72,6 +85,11 @@ public:
     uint32_t getErrorCount() const { return m_error_count.load(); }
 
     /**
+     * @brief Get the total number of successfully decoded idle packets.
+     */
+    uint32_t getIdlePacketCount() const { return m_idle_packet_count.load(); }
+
+    /**
      * @brief Get the current signal status (active/idle).
      * @return true if a valid DCC signal has been detected within the last 500ms.
      */
@@ -90,6 +108,14 @@ public:
     std::vector<DecodedPacket> getRecentPackets(size_t limit = 10);
 
     /**
+     * @brief Inject a packet directly into the decoder history (software loopback).
+     * @param payload Pointer to raw bytes.
+     * @param length Number of bytes.
+     * @param is_valid Whether the packet is valid.
+     */
+    void injectPacket(const uint8_t* payload, size_t length, bool is_valid = true);
+
+    /**
      * @brief Translate a raw DCC packet payload into a human-readable text string.
      * @param payload Pointer to raw bytes.
      * @param length Number of bytes.
@@ -98,40 +124,43 @@ public:
     static std::string parsePacketToHuman(const uint8_t* payload, size_t length);
 
 private:
-    // GPIO Edge Interrupt Handler (runs in ISR context)
-    static void IRAM_ATTR gpio_isr_handler(void* arg);
+    static bool IRAM_ATTR on_recv_done(rmt_channel_handle_t channel, const rmt_rx_done_event_data_t* edata, void* user_ctx);
 
     // Main background processor task
     static void decoderTaskWrapper(void* arg);
     void runDecoderTask();
 
     // Parse timing durations into bits and reconstruct packets
-    void processDuration(uint32_t duration);
+    enum HalfState {
+        STATE_EXPECTING_FIRST_HALF,
+        STATE_EXPECTING_SECOND_HALF
+    };
+    enum HalfType {
+        HALF_INVALID,
+        HALF_ONE,
+        HALF_ZERO
+    };
+
+    void processSymbols(const rmt_symbol_word_t* symbols, size_t count);
+    void processHalfCycle(uint32_t duration);
     void processBit(bool bit);
     void registerDecodedPacket(const uint8_t* payload, size_t length, bool is_valid);
 
     int m_gpio_num;
     bool m_initialized;
 
-    // Interrupt/Task handles
-    QueueHandle_t m_duration_queue;
+    // RMT and Task handles
+    rmt_channel_handle_t m_rx_channel;
+    QueueHandle_t m_symbol_ready_queue;
     TaskHandle_t m_task_handle;
 
-    // High-resolution timing state
-    uint64_t m_last_edge_time;
+    // Ping-pong double buffers in internal RAM (aligned for cache/DMA safety)
+    alignas(32) rmt_symbol_word_t m_rx_buffer[2][1024];
+    volatile uint8_t m_active_buffer;
 
-    // Half-cycle parsing state
-    enum HalfState {
-        STATE_EXPECTING_FIRST_HALF,
-        STATE_EXPECTING_SECOND_HALF
-    };
     HalfState m_half_state;
-    enum HalfType {
-        HALF_INVALID,
-        HALF_ONE,
-        HALF_ZERO
-    };
     HalfType m_first_half_type;
+    uint64_t m_last_edge_time;
 
     // NMRA Packet State Machine
     enum ParserState {
@@ -141,6 +170,7 @@ private:
     };
     ParserState m_parser_state;
     uint32_t m_preamble_count;
+    uint32_t m_consecutive_ones;
     uint8_t m_current_byte;
     uint32_t m_bit_count;
     uint8_t m_packet_buffer[8];
@@ -149,6 +179,7 @@ private:
     // Stats (atomic for thread safety)
     std::atomic<uint32_t> m_success_count;
     std::atomic<uint32_t> m_error_count;
+    std::atomic<uint32_t> m_idle_packet_count;
     std::atomic<uint64_t> m_last_valid_packet_time;
 
     // Thread-safe history ring buffer
