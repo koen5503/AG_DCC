@@ -1,6 +1,6 @@
 /**
  * @file DccDecoder.cpp
- * @brief Hardware DCC Receiver and Decoder utilizing ESP32 GPIO edge interrupts.
+ * @brief Hardware DCC Receiver and Decoder utilizing the ESP32 RMT and DMA peripherals.
  * @author Antigravity Refactoring
  * @date 2026-05-21
  * 
