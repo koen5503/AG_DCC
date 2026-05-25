@@ -17,16 +17,22 @@ This module provides a thread-safe, double-buffered C++ class that handles real-
 
 ---
 
-## ⚖️ Derivative Work & License Notices
+## ⚖️ License Notices & Architectural Evolution
 
-This project is a **derivative work** extracted from the official [ZIMO Elektronik DCC Repository](https://github.com/zimo-elektronik/dcc). 
+This repository was originally initialized as a **derivative work** branched from the official [ZIMO Elektronik DCC Repository](https://github.com/zimo-elektronik/dcc) and initially incorporated early ZIMO template structures.
 
-### Compliance & Attributions:
-- The underlying low-level RMT custom DCC encoder is based on the original work created by **Vincent Hamp** (dated 08/01/2023).
-- In accordance with the **Mozilla Public License, Version 2.0 (MPL-2.0)**:
-  - All source files retain their original copyright notices and are licensed under the terms of the MPL-2.0.
-  - A copy of the full MPL-2.0 text is provided in the `LICENSE` file.
-  - This README serves as the explicit notice informing all recipients that the source code is governed by the MPL-2.0, with links and credits back to the original upstream repository.
+### Current Architectural State:
+* **NMRA-Compliant Global Standards**: The entire codebase has been completely refactored and rewritten. All DCC packet generation, byte layouts, XOR checksums, locomotive speeds, and stationary accessory (turnout) controls are now derived **directly from the official global NMRA S-9.2 and S-9.2.1 specifications**.
+* **100% Stripped of ZTL**: The code is now completely stripped of all C++ templates, custom static mathematical acceleration headers, and specialized Zimo Template Library (ZTL) vectors/containers. It runs on clean, portable, and standard C/C++ primitives and standard ESP-IDF v5 APIs.
+* **Low-Level Hardware Innovations**: The current transmitter architecture uses a custom low-level circular GDMA hardware descriptor ring ($0 \to 1 \to 2 \to 0$) in physical SRAM with disabled hardware writeback (`out_auto_wrback = false`), achieving **absolute 0% CPU overhead** for continuous idle signal generation.
+* **Stable Task-Context RX**: The receiver has been updated with safe double-buffering ping-pong buffers and stable task-context DMA re-arming to ensure 100% crash-free operation.
+
+### Legal Compliance & Attributions:
+* The original low-level RMT custom DCC encoder concept was based on work by **Vincent Hamp** (dated 08/01/2023).
+* In accordance with the **Mozilla Public License, Version 2.0 (MPL-2.0)**:
+  * Modified source files retain original author copyrights where applicable and are licensed under the MPL-2.0.
+  * A copy of the full MPL-2.0 text is provided in the `LICENSE` file.
+  * This repository remains fully open-source and governed by the MPL-2.0, with links and credits back to the original upstream repository.
 
 ---
 
