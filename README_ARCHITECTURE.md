@@ -144,3 +144,100 @@ We ensure absolute stability by moving the RMT receiver re-arming out of the ISR
 * **Zero Driver Lockouts**: By calling `rmt_receive()` exclusively in task context, the driver state machine is never violated, and deadlocks are physically impossible.
 * **No Memory Overwrites**: Because `rmt_receive()` is not called until *after* the task processes the final message chunk from the queue, the DMA hardware cannot start writing new data over the old buffer until the parsing engine has fully finished reading it.
 * **High-Priority Immediate Execution**: The background task runs at FreeRTOS priority `16` (extremely high, above the Web Server and Wi-Fi tasks). This ensures it re-arms the RMT RX within a few microseconds of the transaction completion, preventing any signal capture dropouts.
+
+---
+
+## 3. HTTP API Verification Guide (Using Curl)
+
+The embedded HTTP Web Server runs a REST API on Port 80 to manage, command, and verify DCC transmission and decoding. Below is the reference guide on how to programmatically control the system and verify hardware signal integration using standard `curl` command lines.
+
+### 3.1 Toggle the Hardware RX Decoder
+At boot, the hardware GPIO decoder is disabled (running in software loopback mode). To activate physical hardware RMT signal capture on the GPIO pin (GPIO 6 on ESP32-S3):
+
+* **Endpoint**: `POST /api/decoder/toggle`
+* **JSON Body**: `{"enabled": <boolean>}`
+* **Command**:
+  ```bash
+  curl -X POST -H "Content-Type: application/json" -d '{"enabled": true}' http://<IP_ADDRESS>/api/decoder/toggle
+  ```
+* **Response**:
+  ```json
+  {"status":"ok","enabled":true,"pin":6}
+  ```
+
+---
+
+### 3.2 Trigger Autonomous Test Scenarios
+You can trigger pre-programmed NMRA DCC transmission test sequences to generate command packets in the background.
+
+* **Endpoint**: `POST /api/test`
+* **JSON Body**: `{"scenario": <1-5>}`
+  * `1` - Continuous Idle Packets (5s duration)
+  * `2` - Varying Speed/Direction Locomotive control (50 packets, 5s duration)
+  * `3` - Accessory Solenoid / Turnout toggling (6 commands, 3s duration)
+  * `4` - BiDi (Bidirectional) Cutout testing
+  * `5` - Single DCC Command pulse (for scope triggers)
+* **Command**:
+  ```bash
+  curl -X POST -H "Content-Type: application/json" -d '{"scenario": 2}' http://<IP_ADDRESS>/api/test
+  ```
+* **Response**:
+  ```json
+  {"status":"ok","message":"Test scenario successfully launched in background"}
+  ```
+
+---
+
+### 3.3 Query Real-time Capture and Decoder Status
+Query the receiver metrics, CPU load, and the list of recently decoded physical DCC packets:
+
+* **Endpoint**: `GET /api/decoder`
+* **Command**:
+  ```bash
+  curl -s http://<IP_ADDRESS>/api/decoder
+  ```
+* **Response**:
+  ```json
+  {
+    "active": true,
+    "status": "Active",
+    "pin": 6,
+    "success_count": 5901,
+    "error_count": 0,
+    "idle_packet_count": 5745,
+    "cpu_load_core0": 26,
+    "cpu_load_core1": 5,
+    "packets": [
+      {
+        "timestamp": 232432635,
+        "valid": true,
+        "text": "Loco 3 | Speed 128-step: 69 (steps 1-126) REV",
+        "hex": "0x03 0x3F 0x46 0x7A "
+      }
+    ]
+  }
+  ```
+
+---
+
+### 3.4 Direct Locomotive Speed/Direction Control
+Send raw control packets to individual multi-function decoders:
+
+* **Endpoint**: `POST /api/loco`
+* **JSON Body**: `{"address": <address>, "speed": <0-127>, "direction": <boolean>, "functions": [<bool>, ...]}`
+* **Command**:
+  ```bash
+  curl -X POST -H "Content-Type: application/json" -d '{"address": 3, "speed": 45, "direction": true, "functions": [true, false, true]}' http://<IP_ADDRESS>/api/loco
+  ```
+
+---
+
+### 3.5 Direct Accessory/Turnout Control
+Switch physical stationary turnout decoders (straight vs curved):
+
+* **Endpoint**: `POST /api/accessory`
+* **JSON Body**: `{"address": <turnout_id>, "straight": <boolean>}`
+* **Command**:
+  ```bash
+  curl -X POST -H "Content-Type: application/json" -d '{"address": 12, "straight": true}' http://<IP_ADDRESS>/api/accessory
+  ```
