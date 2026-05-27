@@ -34,9 +34,8 @@
 #include "gdma_priv.h"
 #include "hal/gdma_ll.h"
 
-
-
-
+// Define to 1 to enable register-aligned (K+2)%3 injection, 0 for classic round-robin
+#define USE_REGISTER_ALIGNED_INJECTION 1
 
 static const char* TAG = "DccRmtTx";
 
@@ -306,9 +305,31 @@ bool DccRmtTransmitter::sendPacket(const uint8_t* payload, size_t length, uint32
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 
-    // Write to the next round-robin descriptor index
+#if USE_REGISTER_ALIGNED_INJECTION
+    // Query active descriptor index from GDMA registers to write to the safe (K+2)%3 slot
+    int target_idx;
+    {
+        gdma_tx_channel_t* tx_chan = (gdma_tx_channel_t*)m_dma_chan;
+        int configured_dma_ch = tx_chan->base.pair->pair_id;
+        uint32_t active_addr = gdma_ll_tx_get_prefetched_desc_addr(&GDMA, configured_dma_ch);
+        
+        int active_idx = 0;
+        for (int i = 0; i < 3; i++) {
+            if ((uint32_t)&m_dma_descriptors[i] == active_addr) {
+                active_idx = i;
+                break;
+            }
+        }
+        // Write to the descriptor that is TWO steps ahead in the ring (guarantees a full 6.3ms buffer window)
+        target_idx = (active_idx + 2) % 3;
+        
+        ESP_LOGD(TAG, "GDMA active desc: 0x%08lx (idx: %d), target write index: %d", (unsigned long)active_addr, active_idx, target_idx);
+    }
+#else
+    // Write to the next round-robin descriptor index (classic tested version)
     int target_idx = m_write_idx;
     m_write_idx = (m_write_idx + 1) % 3;
+#endif
 
     // Format into temporary symbols first to prevent GDMA from reading half-written data
     size_t num_symbols = 0;
