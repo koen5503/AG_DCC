@@ -15,6 +15,10 @@
 #include "WifiManager.hpp"
 #include "WebServer.hpp"
 #include "DccDecoder.hpp"
+#include "WiThrottleServer.hpp"
+#ifdef CONFIG_BUILD_TEST_GENERATOR
+#include "TestGenerator.hpp"
+#endif
 #include <esp_log.h>
 #include <esp_system.h>
 #include <freertos/FreeRTOS.h>
@@ -152,14 +156,55 @@ static void on_packet_transmitted(const uint8_t* payload, size_t length, void* a
 // =============================================================================
 // Static instances for DCC components
 // =============================================================================
+#ifdef CONFIG_BUILD_TEST_GENERATOR
+static dcc::wifi::WifiManager wifi_manager;
+static dcc::wt::TestGenerator test_generator;
+#else
 static dcc::rx::DccDecoder decoder;
 static dcc::rmt::DccRmtTransmitter transmitter;
 static dcc::wifi::WifiManager wifi_manager;
 static dcc::rmt::TransmitterConfig config;
+static dcc::wt::WiThrottleServer withrottle_server(&transmitter);
+#endif
 
 // =============================================================================
 // Core 1 Startup Task
 // =============================================================================
+#ifdef CONFIG_BUILD_TEST_GENERATOR
+static void startup_task(void* pvParameters) {
+    ESP_LOGI(TAG, "Startup Task: running Test Generator initializations on Core 1...");
+
+    // 1. Initialize and start Test Generator Client
+    ESP_LOGI(TAG, "Initializing Test Generator Client...");
+    test_generator.init("192.168.4.1", 12090);
+    test_generator.start();
+
+    // 2. Initialize and start Test Generator Web Server
+    ESP_LOGI(TAG, "Initializing Test Generator Web Server...");
+    static dcc::web::WebServer web_server(&test_generator, &wifi_manager);
+    if (!web_server.start()) {
+        ESP_LOGE(TAG, "Failed to start Test Generator Web Server. Aborting.");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    ESP_LOGI(TAG, "===============================================================");
+    ESP_LOGI(TAG, "      DCC WITHROTTLE TEST GENERATOR (CLIENT) RUNNING!");
+    ESP_LOGI(TAG, "===============================================================");
+    if (wifi_manager.isApMode()) {
+        ESP_LOGI(TAG, "  Mode:   Access Point (AP)");
+        ESP_LOGI(TAG, "  SSID:   ESP32-DCC-Controller-[MAC]");
+        ESP_LOGI(TAG, "  Pass:   dcccontrol");
+    } else {
+        ESP_LOGI(TAG, "  Mode:   Station (STA)");
+        ESP_LOGI(TAG, "  SSID:   %s", wifi_manager.getConnectedSsid().c_str());
+    }
+    ESP_LOGI(TAG, "  URL:    http://%s/", wifi_manager.getIpAddress().c_str());
+    ESP_LOGI(TAG, "===============================================================");
+
+    vTaskDelete(NULL);
+}
+#else
 static void startup_task(void* pvParameters) {
     ESP_LOGI(TAG, "Startup Task: running RMT/GDMA initializations on Core 1...");
 
@@ -190,9 +235,15 @@ static void startup_task(void* pvParameters) {
     // Register high-reliability software loopback callback unconditionally for boot Software Loopback Mode
     transmitter.registerCallback(on_packet_transmitted, &decoder);
 
+    // Start WiThrottle TCP server on port 12090
+    ESP_LOGI(TAG, "Initializing WiThrottle TCP Server on Port 12090...");
+    if (!withrottle_server.start(12090)) {
+        ESP_LOGE(TAG, "Failed to start WiThrottle Server.");
+    }
+
     // 3. Initialize and start Embedded Web Server
     ESP_LOGI(TAG, "Initializing Embedded Web Server...");
-    static dcc::web::WebServer web_server(&transmitter, &wifi_manager, &decoder, DCC_DECODER_PIN);
+    static dcc::web::WebServer web_server(&transmitter, &wifi_manager, &decoder, DCC_DECODER_PIN, &withrottle_server);
     if (!web_server.start()) {
         ESP_LOGE(TAG, "Failed to start Web Server. Aborting.");
         vTaskDelete(NULL);
@@ -216,6 +267,7 @@ static void startup_task(void* pvParameters) {
 
     vTaskDelete(NULL);
 }
+#endif
 
 // =============================================================================
 // Application Entrypoint
@@ -224,8 +276,10 @@ extern "C" void app_main() {
     // Initialize and optimize console output
     configure_serial_logging();
     
+#ifndef CONFIG_BUILD_TEST_GENERATOR
     // Print oscilloscope setup instructions
     print_oscilloscope_safety_warning();
+#endif
 
     // 1. Initialize Wi-Fi and Non-Volatile Storage (NVS)
     ESP_LOGI(TAG, "Initializing Wi-Fi Manager...");

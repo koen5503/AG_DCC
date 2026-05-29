@@ -19,18 +19,37 @@
 #include "DccDecoder.hpp"
 
 namespace dcc {
+namespace wt {
+class WiThrottleServer;
+class TestGenerator;
+}
+
 namespace web {
 
 class WebServer {
 public:
+#ifdef CONFIG_BUILD_TEST_GENERATOR
     /**
-     * @brief Construct a WebServer instance.
+     * @brief Construct a WebServer instance for the Test Generator Client.
+     * @param test_generator Pointer to the active TestGenerator.
+     * @param wifi_manager Pointer to the active WifiManager.
+     */
+    WebServer(dcc::wt::TestGenerator* test_generator, dcc::wifi::WifiManager* wifi_manager);
+#else
+    /**
+     * @brief Construct a WebServer instance for the DCC Command Center.
      * @param transmitter Pointer to the initialized DccRmtTransmitter.
      * @param wifi_manager Pointer to the initialized WifiManager.
      * @param decoder Pointer to the initialized DccDecoder (optional).
      * @param decoder_pin The hardware input GPIO pin connected to the DCC signal.
+     * @param withrottle_server Pointer to the active WiThrottleServer (optional).
      */
-    WebServer(dcc::rmt::DccRmtTransmitter* transmitter, dcc::wifi::WifiManager* wifi_manager, dcc::rx::DccDecoder* decoder = nullptr, int decoder_pin = -1);
+    WebServer(dcc::rmt::DccRmtTransmitter* transmitter, 
+              dcc::wifi::WifiManager* wifi_manager, 
+              dcc::rx::DccDecoder* decoder = nullptr, 
+              int decoder_pin = -1,
+              dcc::wt::WiThrottleServer* withrottle_server = nullptr);
+#endif
     
     /**
      * @brief Destroy the WebServer instance (stops server if running).
@@ -63,9 +82,13 @@ private:
     static esp_err_t decoderGetHandler(httpd_req_t* req);
     static esp_err_t decoderTogglePostHandler(httpd_req_t* req);
     static esp_err_t triggerPostHandler(httpd_req_t* req);
+    static esp_err_t withrottleGetHandler(httpd_req_t* req);
 
+private:
     dcc::rmt::DccRmtTransmitter* m_transmitter;
+public:
     dcc::wifi::WifiManager* m_wifi_manager;
+private:
     dcc::rx::DccDecoder* m_decoder;
     httpd_handle_t m_server_handle;
     int m_decoder_pin;
@@ -74,6 +97,10 @@ private:
     int m_last_loco_speed;
     bool m_last_loco_direction;
     bool m_last_f_states[9];
+
+    dcc::wt::WiThrottleServer* m_withrottle_server;
+public:
+    dcc::wt::TestGenerator* m_test_generator;
 };
 
 } // namespace web

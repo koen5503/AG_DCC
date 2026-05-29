@@ -73,146 +73,28 @@ Our receiver eliminates this vulnerability through a **Ping-Pong Buffer Swap & D
 
 ---
 
-## 📦 Integration & API Usage
+## 💥 Memory Map Alignment Offset Mismatch & RX Regression
 
-### 1. Asynchronous DCC Transmitter (`DccRmtTransmitter`)
-To stream DCC packets asynchronously, configure and initialize the transmitter class, then queue packets:
+During the integration of the WiThrottle server module, we identified and resolved a critical hardware regression where the **Hardware RMT RX Decoder** failed to capture loopback waveforms (remaining stuck in the "No Signal" state) despite all decoding code being physically correct.
 
-```cpp
-#include "DccRmtTransmitter.hpp"
+### The Problem: Mismatched Member Variable Offsets
+The ESP32-S3 compiler optimizes class pointer references by generating absolute binary offsets from the base address of the class instance. 
 
-dcc::rmt::DccRmtTransmitter transmitter;
+In `WebServer.hpp`, we conditionally compiled target environments (Command Center vs. Test Generator) using the compiler macro `CONFIG_BUILD_TEST_GENERATOR`. Our initial class layout inserted a conditional pointer member (`m_withrottle_server` or `m_test_generator`) in the middle of the class layout.
 
-void app_main() {
-    dcc::rmt::TransmitterConfig config;
-    config.gpio_num = 5;         // Pin to drive the H-Bridge
-    config.enable_bidi = true;   // Enable NMRA S-9.2.1 BiDi Cutout
-    config.num_preamble = 18;    // Highly stable 18-bit preamble
+* **Target 1 (DCC Command Center)**: Exposes `m_withrottle_server`.
+* **Target 2 (WiThrottle Test Generator)**: Exposes `m_test_generator`.
 
-    if (transmitter.init(config)) {
-        // Queue speed packet for Loco 3 (Speed Step 45, Forward)
-        uint8_t payload[3] = { 0x03, 0x3F, 0x00 };
-        payload[2] = payload[0] ^ payload[1]; // XOR Checksum
-        
-        transmitter.sendPacket(payload, sizeof(payload));
-    }
-}
-```
+Because these pointers were declared in the middle of the class private variables, the subsequent class members—most notably **`int m_decoder_pin`**—shifted in memory.
+When `app_main.cpp` was compiled, it utilized the base offset mapping of the header. However, if `WebServer.cpp` was built with slightly different header alignments, or if the compiler generated mismatched structure padding:
+1. `app_main.cpp` initialized `m_decoder_pin = 6` at binary offset $O_A$.
+2. The runtime REST API handler inside `WebServer.cpp` read the pin value from binary offset $O_B$.
+3. Since $O_A \ne O_B$, the handler read a garbage value (or `-1`), causing the physical decoder to initialize in safe Software Loopback Mode instead of hardware RMT RX mode on GPIO 6, breaking the loopback interface completely.
 
-### 2. Safe Real-Time DCC Decoder (`DccDecoder`)
-To decode physical DCC packets in real-time, initialize the decoder on a GPIO capture pin. It runs its parsing task on Core 1 and exposes thread-safe APIs to query statistics and history:
-
-```cpp
-#include "DccDecoder.hpp"
-
-dcc::rx::DccDecoder decoder;
-
-void app_main() {
-    // Initialize the physical hardware decoder on GPIO 6
-    if (decoder.init(6)) {
-        while (true) {
-            // Check if a valid DCC signal is physically present
-            if (decoder.isSignalActive()) {
-                printf("DCC Signal Active! Successes: %lu | Errors: %lu\n",
-                       decoder.getSuccessCount(), decoder.getErrorCount());
-
-                // Retrieve recently decoded packets
-                auto recent = decoder.getRecentPackets(5);
-                for (const auto& pkt : recent) {
-                    printf("[%llu] Packet: %s (hex: ", pkt.timestamp, pkt.human_readable.c_str());
-                    for (int i = 0; i < pkt.length; ++i) printf("0x%02X ", pkt.payload[i]);
-                    printf(")\n");
-                }
-            } else {
-                printf("No physical DCC signal detected.\n");
-            }
-            vTaskDelay(pdMS_TO_TICKS(2000));
-        }
-    }
-}
-```
-
-### 3. Closed-Loop / Software Loopback Mode
-You can easily link the transmitter and receiver to verify packets in software or run physical loopback tests. By registering a callback on the transmitter, you capture every transmitted packet:
-
-```cpp
-// Callback triggered every time a packet is successfully loaded into DMA
-static void on_packet_transmitted(const uint8_t* payload, size_t length, void* arg) {
-    auto* dec = static_cast<dcc::rx::DccDecoder*>(arg);
-    
-    // Inject packet directly into decoder statistics and history (software loopback)
-    bool is_valid = true; // Checksum validation can be calculated here
-    dec->injectPacket(payload, length, is_valid);
-}
-
-void app_main() {
-    decoder.init(-1); // Initialize in Software Loopback Mode
-    transmitter.init(config);
-    
-    // Register loopback callback
-    transmitter.registerCallback(on_packet_transmitted, &decoder);
-}
-```
-
----
-
-## 💻 HTTP REST API Verification (Curl Guide)
-
-The embedded Web Server running on Port 80 exposes a powerful REST API that allows you to programmatically toggle modes, trigger test sweeps, and inspect the real-time decoder metrics using standard `curl` commands.
-
-### 1. Toggle Hardware Decoder Capture
-At boot, the decoder defaults to safe Software Loopback Mode (`pin: -1`). Switch it to capture physical signals on GPIO 6:
-```bash
-curl -X POST -H "Content-Type: application/json" -d '{"enabled": true}' http://192.168.2.92/api/decoder/toggle
-```
-*Response:*
-```json
-{"status":"ok","enabled":true,"pin":6}
-```
-
-### 2. Inspect Real-time Decoder Metrics
-Query the status, active signal state, packet count, CPU loads, and the history of decoded NMRA packets:
-```bash
-curl -s http://192.168.2.92/api/decoder
-```
-*Response:*
-```json
-{
-  "active": true,
-  "status": "Active",
-  "pin": 6,
-  "success_count": 5901,
-  "error_count": 0,
-  "idle_packet_count": 5745,
-  "cpu_load_core0": 26,
-  "cpu_load_core1": 5,
-  "packets": [
-    {
-      "timestamp": 232432635,
-      "valid": true,
-      "text": "Loco 3 | Speed 128-step: 69 (steps 1-126) REV",
-      "hex": "0x03 0x3F 0x46 0x7A "
-    }
-  ]
-}
-```
-
-### 3. Launch Autonomous Test Scenarios
-Run pre-programmed waveforms in the background to analyze on an oscilloscope or physically decode:
-```bash
-# Scenario 2 runs a 50-packet speed sweep on Loco 3
-curl -X POST -H "Content-Type: application/json" -d '{"scenario": 2}' http://192.168.2.92/api/test
-```
-
-### 4. Direct Locomotive & Accessory Control
-Drive multi-function decoders or stationary accessory turnouts directly over HTTP:
-```bash
-# Send Speed 45, Direction Forward, and F0/F2 functions ON to Address 3
-curl -X POST -H "Content-Type: application/json" -d '{"address": 3, "speed": 45, "direction": true, "functions": [true, false, true]}' http://192.168.2.92/api/loco
-
-# Set Accessory Turnout Address 12 to "Straight"
-curl -X POST -H "Content-Type: application/json" -d '{"address": 12, "straight": true}' http://192.168.2.92/api/accessory
-```
+### The Architectural Fix
+To enforce permanent structure alignment across all compiler configurations, we implemented the following layout guidelines:
+* **Unconditioned Member Order**: All core member variables common to standard targets (`m_transmitter`, `m_wifi_manager`, `m_decoder`, `m_server_handle`, and `m_decoder_pin`) are declared unconditionally at the very top of the class layout in `WebServer.hpp`. This guarantees identical offset maps ($O_A = O_B$) in all compiled binaries.
+* **Safe Terminal Appending**: Environment-specific pointers (`m_withrottle_server` or `m_test_generator`) are cleanly appended to the **absolute end** of the class definition, where structure padding modifications cannot disrupt the offsets of preceding variables.
 
 ---
 
@@ -227,13 +109,200 @@ curl -X POST -H "Content-Type: application/json" -d '{"address": 12, "straight":
 
 ---
 
+## 🧪 Automated Testing Methodology (Zero-Jitter Closed Loop)
+
+To validate high-priority packet streaming under continuous load without requiring manual hardware testing, we designed an autonomous, closed-loop testing framework that spans across two physical ESP32-S3 devices:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant TG as Device 2: Test Generator (Client)
+    participant WT as Device 1: WiThrottle Server (TCP)
+    participant DCC_TX as Device 1: DCC Transmitter (GDMA/RMT)
+    participant DCC_RX as Device 1: DCC Decoder (RMT RX)
+    participant DEC_API as Device 1: Decoder REST API (HTTP)
+
+    Note over TG,WT: 1. Non-Blocking Handshake (3s Timeout)
+    TG->>WT: TCP Connect (Port 12090)
+    WT-->>TG: Handshake: VN2.0 *0 HTESP32-DCC PPA1
+    
+    Note over TG,WT: 2. WiThrottle Packet Streaming
+    TG->>WT: Send WiThrottle Turnout: PTAC10 (Turnout 10 Closed)
+    
+    Note over WT,DCC_TX: 3. DCC Packet Translation & Waveform Generation
+    WT->>DCC_TX: Queue Packet: [0x80, 0xF9, 0x79] (Turnout ON)
+    DCC_TX->>DCC_RX: Output Waveform (GPIO 5 -> 6 Loopback)
+    
+    Note over TG,DEC_API: 4. Closed-Loop Telemetry Verification
+    DCC_RX->>DEC_API: Save decoded packet in memory buffer
+    TG->>DEC_API: HTTP GET /api/decoder
+    DEC_API-->>TG: JSON: success_count, parsed packets list
+    TG->>TG: Verify: Does the decoded DCC history contain "Turnout Addr: 10"?
+    TG->>TG: Record latency & increment success metrics
+```
+
+### The Closed-Loop Flow
+1. **WiThrottle TCP Bridge**: **Device 2 (Test Generator)** connects as a socket client to **Device 1 (Command Center)** on Port 12090.
+2. **Dynamic Command Injection**: Device 2 streams standard WiThrottle string commands (Cabs, Speeds, Turnouts) across the network.
+3. **Hardware Waveform Output**: Device 1 translates the WiThrottle commands into standard NMRA DCC bytes, packages them into SRAM, and outputs the biphasic waveform on **GPIO 5 (TX)**.
+4. **DMA Capture & Decode**: A physical loopback jumper routes the signal to **GPIO 6 (RX)** on Device 1, where the RMT RX DMA engine decodes it back to raw bytes.
+5. **REST API Verification**: Device 2 performs an asynchronous HTTP GET request to Device 1's `/api/decoder` endpoint, parses the returned JSON packet history, matches it against the expected command, and records the exact **end-to-end latency** (from socket write to track pulse decode).
+
+---
+
+## 💻 REST API Reference
+
+The Command Center and Test Generator are fully controllable via an embedded HTTP REST API. Below is the complete endpoint documentation.
+
+### 1. DCC Command Center (Device 1)
+
+#### `GET /`
+* **Description**: Serves the glassmorphic, responsive HTML/JS control panel.
+* **Response**: `text/html`
+
+#### `GET /api/wifi/scan`
+* **Description**: Scans nearby Wi-Fi networks and returns SSIDs, RSSI levels, and security states.
+* **Response**: `application/json`
+  ```json
+  [
+    {"ssid":"huizer","rssi":-68,"channel":13,"secure":true}
+  ]
+  ```
+
+#### `POST /api/wifi/config`
+* **Description**: Saves local Wi-Fi credentials to NVS and reboots the device to connect in Station mode.
+* **Payload**:
+  ```json
+  {"ssid":"SSID_NAME","password":"PASSWORD"}
+  ```
+* **Response**: `{"status":"ok"}` (triggers `scheduleReboot` in 1.5 seconds).
+
+#### `GET /api/decoder`
+* **Description**: Returns physical RMT RX decoder state, error counts, CPU load on Core 0 & Core 1, and the history of recently parsed NMRA track packets.
+* **Response**: `application/json`
+  ```json
+  {
+    "active": true,
+    "status": "Active",
+    "pin": 6,
+    "success_count": 5901,
+    "error_count": 0,
+    "idle_packet_count": 5745,
+    "cpu_load_core0": 26,
+    "cpu_load_core1": 5,
+    "packets": [
+      {
+        "timestamp": 232432635,
+        "valid": true,
+        "text": "Loco 3 | Speed 128-step: 69 (steps 1-126) REV",
+        "hex": "0x03 0x3F 0x46 0x7A "
+      }
+    ]
+  }
+  ```
+
+#### `POST /api/decoder/toggle`
+* **Description**: Switches the hardware RMT RX decoder ON or OFF. When disabled, the receiver falls back to Software Loopback.
+* **Payload**: `{"enabled": true}`
+* **Response**: `{"status":"ok","enabled":true,"pin":6}`
+
+#### `GET /api/withrottle`
+* **Description**: Lists active WiThrottle clients currently connected to the server's TCP socket port.
+* **Response**: `application/json`
+
+#### `POST /api/loco`
+* **Description**: Directly dispatches DCC speed, direction, and function packets to a multi-function locomotive decoder.
+* **Payload**:
+  ```json
+  {
+    "address": 3,
+    "speed": 45,
+    "direction": true,
+    "functions": [true, false, true, false, false, false, false, false, false]
+  }
+  ```
+* **Response**: `{"status":"ok"}`
+
+#### `POST /api/accessory`
+* **Description**: Directly throws or closes stationary accessory turnout decoders.
+* **Payload**:
+  ```json
+  {
+    "address": 10,
+    "straight": true
+  }
+  ```
+* **Response**: `{"status":"ok"}`
+
+---
+
+### 2. WiThrottle Test Generator (Device 2)
+
+#### `GET /`
+* **Description**: Serves the Test Generator's premium glassmorphic orchestrator panel.
+* **Response**: `text/html`
+
+#### `POST /api/test/config`
+* **Description**: Updates the target Command Center server IP address in memory and NVS.
+* **Payload**: `{"server_ip":"192.168.2.92"}`
+* **Response**: `{"status":"ok"}`
+
+#### `POST /api/throttle/set`
+* **Description**: Intercepts manual Cab throttle operations and queues them across the active WiThrottle TCP socket to the Command Center.
+* **Payload**:
+  ```json
+  {
+    "address": 3,
+    "is_long": false,
+    "speed": 55,
+    "direction": true,
+    "func": 1,
+    "func_state": true
+  }
+  ```
+* **Response**: `{"status":"ok"}`
+
+#### `POST /api/turnout/set`
+* **Description**: Routes turnout commands across the WiThrottle socket.
+* **Payload**: `{"address":10,"straight":false}`
+* **Response**: `{"status":"ok"}`
+
+#### `POST /api/test/launch`
+* **Description**: Triggers background execution of an autonomous verification scenario.
+* **Payload**: `{"scenario":1}`
+* **Response**: `{"status":"ok"}`
+
+#### `GET /api/test/results`
+* **Description**: Queries active test results, execution logs, packet delivery, average latencies, the persisted target IP, Wi-Fi mode, connected SSID, and local IP.
+* **Response**: `application/json`
+  ```json
+  {
+    "test_name": "Speed Sweep Scenario",
+    "is_running": false,
+    "total_tests": 10,
+    "success_count": 10,
+    "failure_count": 0,
+    "packets_sent": 10,
+    "packets_lost": 0,
+    "avg_latency_ms": 352.0,
+    "server_ip": "192.168.2.92",
+    "wifi_mode": "Station Mode",
+    "wifi_ssid": "huizer",
+    "wifi_ip": "192.168.2.96",
+    "last_log": "=== Starting Test Scenario: Speed Sweep Scenario ===\n..."
+  }
+  ```
+
+---
+
 ## 🛠️ Project Structure
 
 * `main/DccRmtTransmitter.hpp` / `.cpp`: Hardware-chained circular GDMA DCC transmitter.
 * `main/DccDecoder.hpp` / `.cpp`: Task-context re-armed double-buffered RMT DCC receiver and parser.
 * `main/WifiManager.hpp` / `.cpp`: Automatic provisioning manager for Wi-Fi (AP & STA modes).
-* `main/WebServer.hpp` / `.cpp`: Embedded REST Web Server providing a glassmorphic command center dashboard.
+* `main/WebServer.hpp` / `.cpp`: Embedded REST Web Server providing the glassmorphic command center dashboards.
 * `main/app_main.cpp`: Instrumentation test runner mapping CPU pins and executing diagnostic routines.
+* `main/index_html.h`: Embedded HTML/JS dashboard resource for the primary Command Center.
 
 ---
 
@@ -276,6 +345,7 @@ To compile, flash, and monitor using PlatformIO:
 3. Select this project's root folder (`AG_DCC`).
 4. In the PlatformIO Environment Switcher (bottom toolbar), choose your target:
    - `env:esp32dev` (for standard ESP32 boards)
-   - `env:esp32s3` (for ESP32-S3 dev boards)
+   - `env:esp32s3` (for ESP32-S3 Command Center target)
+   - `env:esp32s3_test_gen` (for ESP32-S3 WiThrottle Test Generator target)
    - `env:esp32c3` (for ESP32-C3 dev boards)
-5. Click **Build** (checkmark icon) or **Upload and Monitor** (arrow & plug icons) to flash and observe real-time console logs!
+5. Click **Build** (checkmark icon) or **Upload and Monitor** (arrow & plug icons) to flash and observe real-time logs!
