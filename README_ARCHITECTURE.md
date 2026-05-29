@@ -71,7 +71,7 @@ We solve this using **Zero-Halt Register-Aligned Writing**:
    ```
    We map this address to our descriptor index $K \in \{0, 1, 2\}$.
 2. **Select the Safe Descriptor**:
-   Since GDMA is busy reading descriptor $K$ (which takes at least $6.3\text{ ms}$), the next descriptor $(K + 1) \% 3$ is guaranteed to be completely idle and safe from GDMA access.
+   Since GDMA is busy reading descriptor $K$ and the hardware pre-fetch buffer may have already readied the next descriptor $(K + 1) \% 3$, the descriptor $(K + 2) \% 3$ is guaranteed to be completely idle and safe from GDMA access.
 3. **Write and Flush**:
    We format our command packet symbols directly into the idle buffer, update its descriptor `size` and `length`, and flush the CPU cache:
    ```cpp

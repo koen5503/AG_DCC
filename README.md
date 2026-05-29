@@ -43,7 +43,7 @@ Descriptor 2 (buf: m_dma_buffers[2], owner: HW)
      +-------> (loops back to Descriptor 0)
 ```
 
-By masking GDMA TX interrupts at the peripheral register level and disabling the GDMA hardware's automatic writeback (`out_auto_wrback = false`), the GDMA controller continuously traverses this ring entirely in hardware. During idle track output, the CPU load is **exactly 0%**. When the user queues a turnout toggle or speed change, the CPU queries the GDMA pre-fetch register to identify the active descriptor ($K$), formats the command packet into the safe idle descriptor ($(K+1)\%3$), and updates the size. The GDMA reads the new packet automatically on its next loop transition.
+By masking GDMA TX interrupts at the peripheral register level and disabling the GDMA hardware's automatic writeback (`out_auto_wrback = false`), the GDMA controller continuously traverses this ring entirely in hardware. During idle track output, the CPU load is **exactly 0%**. When the user queues a turnout toggle or speed change, the CPU queries the GDMA pre-fetch register to identify the active descriptor ($K$). Since the hardware is currently reading descriptor $K$ and may have already pre-fetched descriptor $(K+1)\%3$, we format the command packet into the guaranteed safe, idle descriptor ($(K+2)\%3$), and update the size. The GDMA reads the new packet automatically when it loops around to it.
 
 ### 2. The Zero-ISR Task-Context Re-Armed Receiver (RX)
 Capturing high-speed edge transitions in real-time requires microsecond-level precision. In typical RMT RX systems, calling public driver APIs like `rmt_receive()` within the RMT interrupt context (ISR) leads to nested locking issues, timing jitter, or driver lockouts that shut down the receiver.
