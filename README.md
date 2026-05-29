@@ -21,6 +21,11 @@ This module provides two thread-safe, decoupled, and hardware-accelerated C++ cl
 * **Zero-Copy Queueing**: Symbol buffers are passed from the ISR to the task context via pointers, avoiding expensive memory copies.
 * **NMRA Verification**: Reconstructs DCC bits, validates packets using XOR checksums, and translates them into human-readable commands (loco speed steps, functions F0–F12, and stationary accessories).
 
+### 3. Integrated WiThrottle TCP Server (Port 12090)
+* **Asynchronous BSD Sockets**: Runs a thread-safe, non-blocking TCP socket server on port `12090` that handles concurrent connections from WiThrottle controllers (e.g. Engine Driver on Android, WiThrottle on iOS).
+* **Direct Real-Time Translation**: Parses incoming WiThrottle cab commands (multi-cab speeds, direction, functions F0–F28) and accessory commands (turnouts) and translates them on-the-fly into raw standard NMRA DCC packets.
+* **Automated Heartbeats & Clean Cleanup**: Monitors active client connections with periodic heartbeat checks to automatically release locomotive controls and clean up resources upon client disconnect.
+
 ---
 
 ## 🧠 Low-Level Innovations & Architectural Splitting
@@ -292,6 +297,88 @@ The Command Center and Test Generator are fully controllable via an embedded HTT
     "last_log": "=== Starting Test Scenario: Speed Sweep Scenario ===\n..."
   }
   ```
+
+---
+
+## 📦 Integration & C++ API Usage
+
+To drop this command center and receiver modules into any ESP-IDF v5.x project:
+
+### 1. Project Configuration
+1. Copy the source files (`DccRmtTransmitter.*`, `DccDecoder.*`, `WiThrottleServer.*`, `WifiManager.*`, and `WebServer.*`) into your project's `main/` or components directory.
+2. In your `CMakeLists.txt`, register the source files and add `esp_driver_rmt` to the requirements:
+   ```cmake
+   idf_component_register(SRCS "app_main.cpp"
+                               "DccRmtTransmitter.cpp"
+                               "DccDecoder.cpp"
+                               "WiThrottleServer.cpp"
+                               "WifiManager.cpp"
+                               "WebServer.cpp"
+                          INCLUDE_DIRS "."
+                          REQUIRES driver esp_driver_rmt lwip json)
+   ```
+
+### 2. C++ API Integration Examples
+
+#### A. Asynchronous DCC Transmitter (`DccRmtTransmitter`)
+```cpp
+#include "DccRmtTransmitter.hpp"
+
+static dcc::rmt::DccRmtTransmitter transmitter;
+
+void app_main() {
+    dcc::rmt::TransmitterConfig config;
+    config.gpio_num = 5;         // Physical GPIO to output DCC logic signal
+    config.enable_bidi = false;  // Toggle NMRA S-9.2.1 BiDi Cutout
+    config.bit1_duration = 58;   // 58 us (NMRA '1' pulse half-width)
+    config.bit0_duration = 100;  // 100 us (NMRA '0' pulse half-width)
+
+    if (transmitter.init(config)) {
+        // Enqueue a standard DCC locomotive speed packet
+        // Payload: [Address, Command, XOR Checksum]
+        uint8_t payload[3] = { 0x03, 0x3F, 0x3C }; 
+        transmitter.sendPacket(payload, sizeof(payload));
+    }
+}
+```
+
+#### B. Real-Time DCC Decoder (`DccDecoder`)
+```cpp
+#include "DccDecoder.hpp"
+
+static dcc::rx::DccDecoder decoder;
+
+void app_main() {
+    // Pass a valid GPIO pin for hardware RMT capture, or -1 for Software Loopback Mode
+    int decoder_pin = 6; 
+    if (decoder.init(decoder_pin)) {
+        // Query successfully decoded packets
+        uint32_t count = decoder.getSuccessCount();
+        auto recent = decoder.getRecentPackets(5);
+        for (const auto& pkt : recent) {
+            printf("Decoded packet: %s\n", pkt.human_readable.c_str());
+        }
+    }
+}
+```
+
+#### C. WiThrottle TCP Server (`WiThrottleServer`)
+```cpp
+#include "WiThrottleServer.hpp"
+#include "DccRmtTransmitter.hpp"
+
+static dcc::rmt::DccRmtTransmitter transmitter;
+static dcc::wt::WiThrottleServer withrottle_server(&transmitter);
+
+void app_main() {
+    // 1. Initialize Wi-Fi (in Station or Access Point Mode)
+    // 2. Start the DCC Transmitter
+    // 3. Start the WiThrottle server on Port 12090
+    if (withrottle_server.start(12090)) {
+        printf("WiThrottle Server actively running on Port 12090\n");
+    }
+}
+```
 
 ---
 
